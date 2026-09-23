@@ -33,6 +33,18 @@ The success of compiling of the c/c++ codes and installation may depend on the c
 ```Shell
 R CMD install asSeq_0.99.501.tar.gz
 ```
+## Command line interface
+
+`inst/scripts/run_trecase.R` runs `trecase` from the command line. It builds the model inputs from gene x sample count matrices (total, haplotype 1, haplotype 2), a covariate x sample matrix, a phased VCF, and a BED file of gene TSSs:
+
+```Shell
+Rscript $(Rscript -e 'cat(system.file("scripts/run_trecase.R", package="asSeq"))') \
+    total.txt hap1.txt hap2.txt covariates.txt genotypes.vcf.gz tss.bed \
+    --output-tag=results --p-cut=0.05
+```
+
+All other `trecase` arguments are available as options. Run with `--help` for details.
+
 ## geoP
 
 geoP is a method that exploits a geometric interpretation of permuation p-values to estimate permutation p-values without acutal permutations. It has been implemented in function `getPermP.R`. 
