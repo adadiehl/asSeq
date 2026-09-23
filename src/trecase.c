@@ -483,7 +483,7 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
 
   /* ======================================================== */
 
-  exPara = (double *) Calloc(3*N+7, double);
+  exPara = (double *) R_Calloc(3*N+7, double);
   
   exPara[0] = (double) N; 
   exPara[1] = 0.0; /* h: sample size for ASE model */
@@ -516,13 +516,13 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
    * one SNP, the same as for X
    */
 
-  Xb      = (double *) Calloc(N*(nX+1), double);
-  fitted0 = (double *) Calloc(N, double); /* for Null TReC model */
-  fitted1 = (double *) Calloc(N, double); /* for Alternative TReC model */
-  fitted2 = (double *) Calloc(N, double); /* for Alternative TReC model */
-  resid   = (double *) Calloc(N, double);
-  weights = (double *) Calloc(N, double);
-  offsetN = (double *) Calloc(N, double);
+  Xb      = (double *) R_Calloc(N*(nX+1), double);
+  fitted0 = (double *) R_Calloc(N, double); /* for Null TReC model */
+  fitted1 = (double *) R_Calloc(N, double); /* for Alternative TReC model */
+  fitted2 = (double *) R_Calloc(N, double); /* for Alternative TReC model */
+  resid   = (double *) R_Calloc(N, double);
+  weights = (double *) R_Calloc(N, double);
+  offsetN = (double *) R_Calloc(N, double);
   
   /* point to the last column of X */
   pXlast  = X + N*nX;
@@ -1363,14 +1363,14 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
   
   fclose(ff);
   
-  Free(Xb);
-  Free(fitted0);
-  Free(fitted1);
-  Free(fitted2);
-  Free(resid);
-  Free(weights);
-  Free(offsetN);
-  Free(exPara);
+  R_Free(Xb);
+  R_Free(fitted0);
+  R_Free(fitted1);
+  R_Free(fitted2);
+  R_Free(resid);
+  R_Free(weights);
+  R_Free(offsetN);
+  R_Free(exPara);
   UNPROTECT(1);
   /* end time */
   sec_e  = time(NULL);
@@ -1513,7 +1513,7 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
   
   /* ======================================================== */
   
-  // exPara = (double *) Calloc(3*N+7, double);
+  // exPara = (double *) R_Calloc(3*N+7, double);
   
   exPara[0] = (double) N; 
   exPara[1] = 0.0; /* h: sample size for ASE model */
@@ -2375,18 +2375,18 @@ void trecase_permute (int* dims, double* Y, double* X, double* Z,
    * best (associated) marker and p-value for each gene 
    * in each permutation
    */  
-  best_m0 = (int *) Calloc(4*nY, int);
-  pval0   = (double *) Calloc(4*nY, double);
+  best_m0 = (int *) R_Calloc(4*nY, int);
+  pval0   = (double *) R_Calloc(4*nY, double);
   
   /* pernutation index */
-  perm1   = (int *)Calloc(N, int);
-  perm2   = (double *) Calloc(N, double);
+  perm1   = (int *)R_Calloc(N, int);
+  perm2   = (double *) R_Calloc(N, double);
 
   /* permuted expression values */
-  perY    = (double *) Calloc(nY*N, double);
-  perY1   = (double *) Calloc(nY*N, double);
-  perY2   = (double *) Calloc(nY*N, double);
-  perX    = (double *) Calloc((nX+1)*N, double);
+  perY    = (double *) R_Calloc(nY*N, double);
+  perY1   = (double *) R_Calloc(nY*N, double);
+  perY2   = (double *) R_Calloc(nY*N, double);
+  perX    = (double *) R_Calloc((nX+1)*N, double);
 
   /* initial permutation p-value */
   for(q=0; q<4*nY; q++){ 
@@ -2399,15 +2399,15 @@ void trecase_permute (int* dims, double* Y, double* X, double* Z,
    * one SNP, the same as for X
    */
   
-  Xb      = (double *) Calloc(N*(nX+1), double);
-  fitted0 = (double *) Calloc(N, double); /* for Null TReC model */
-  fitted1 = (double *) Calloc(N, double); /* for Alternative TReC model */
-  fitted2 = (double *) Calloc(N, double); /* for Alternative TReC model */
-  resid   = (double *) Calloc(N, double);
-  weights = (double *) Calloc(N, double);
-  offsetN = (double *) Calloc(N, double);
+  Xb      = (double *) R_Calloc(N*(nX+1), double);
+  fitted0 = (double *) R_Calloc(N, double); /* for Null TReC model */
+  fitted1 = (double *) R_Calloc(N, double); /* for Alternative TReC model */
+  fitted2 = (double *) R_Calloc(N, double); /* for Alternative TReC model */
+  resid   = (double *) R_Calloc(N, double);
+  weights = (double *) R_Calloc(N, double);
+  offsetN = (double *) R_Calloc(N, double);
   
-  exPara = (double *) Calloc(3*N+7, double);
+  exPara = (double *) R_Calloc(3*N+7, double);
 
   /***
    * find the smallest p-value for each gene with unpermuted data 
@@ -2520,23 +2520,23 @@ void trecase_permute (int* dims, double* Y, double* X, double* Z,
   
   *succeed = 0;
 
-  Free(best_m0);
-  Free(pval0);
-  Free(perm1);
-  Free(perm2);
-  Free(perY);
-  Free(perY1);
-  Free(perY2);
-  Free(perX);
+  R_Free(best_m0);
+  R_Free(pval0);
+  R_Free(perm1);
+  R_Free(perm2);
+  R_Free(perY);
+  R_Free(perY1);
+  R_Free(perY2);
+  R_Free(perX);
 
-  Free(Xb);
-  Free(fitted0);
-  Free(fitted1);
-  Free(fitted2);
-  Free(resid);
-  Free(weights);
-  Free(offsetN);
-  Free(exPara);
+  R_Free(Xb);
+  R_Free(fitted0);
+  R_Free(fitted1);
+  R_Free(fitted2);
+  R_Free(resid);
+  R_Free(weights);
+  R_Free(offsetN);
+  R_Free(exPara);
   UNPROTECT(1);
     
   *succeed = 1;

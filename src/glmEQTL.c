@@ -88,13 +88,13 @@ void glmEQTL (int* dims, double* Y, double* X, double* Z, double* z1,
    * one SNP, the same as for X
    */
 
-  Xb      = (double *) Calloc(N*(nX+1), double);
-  fitted0 = (double *) Calloc(N, double);
-  fitted1 = (double *) Calloc(N, double);
-  fitted2 = (double *) Calloc(N, double);
-  resid   = (double *) Calloc(N, double);
-  weights = (double *) Calloc(N, double);
-  offsetN = (double *) Calloc(N, double);
+  Xb      = (double *) R_Calloc(N*(nX+1), double);
+  fitted0 = (double *) R_Calloc(N, double);
+  fitted1 = (double *) R_Calloc(N, double);
+  fitted2 = (double *) R_Calloc(N, double);
+  resid   = (double *) R_Calloc(N, double);
+  weights = (double *) R_Calloc(N, double);
+  offsetN = (double *) R_Calloc(N, double);
 
   /* point to the last column of X */
   pXlast  = X + N*nX;
@@ -310,13 +310,13 @@ void glmEQTL (int* dims, double* Y, double* X, double* Z, double* z1,
     Rprintf("\n--------------------------------------------------------------\n");
   }
     
-  Free(Xb);
-  Free(fitted0);
-  Free(fitted1);
-  Free(fitted2);
-  Free(resid);
-  Free(weights);
-  Free(offsetN);
+  R_Free(Xb);
+  R_Free(fitted0);
+  R_Free(fitted1);
+  R_Free(fitted2);
+  R_Free(resid);
+  R_Free(weights);
+  R_Free(offsetN);
 
   *succeed = 1;
 }
@@ -613,29 +613,29 @@ void glmEQTL_permute (int* dims, double* Y, double* X, double* Z, double *z1,
   
   double *Xb, *fitted0, *fitted1, *fitted2, *resid, *weights, *offsetN;
   
-  Xb      = (double *) Calloc(N*(nX+1), double);
-  fitted0 = (double *) Calloc(N, double);
-  fitted1 = (double *) Calloc(N, double);
-  fitted2 = (double *) Calloc(N, double);
-  resid   = (double *) Calloc(N, double);
-  weights = (double *) Calloc(N, double);
-  offsetN = (double *) Calloc(N, double);
+  Xb      = (double *) R_Calloc(N*(nX+1), double);
+  fitted0 = (double *) R_Calloc(N, double);
+  fitted1 = (double *) R_Calloc(N, double);
+  fitted2 = (double *) R_Calloc(N, double);
+  resid   = (double *) R_Calloc(N, double);
+  weights = (double *) R_Calloc(N, double);
+  offsetN = (double *) R_Calloc(N, double);
 
   /***
    * best (associated) marker and p-value for each gene 
    * in each permutation
    */  
-  best_m0 = (int *)    Calloc(nY, int);
-  pval0   = (double *) Calloc(nY, double);
+  best_m0 = (int *)    R_Calloc(nY, int);
+  pval0   = (double *) R_Calloc(nY, double);
   
   /* permuted expression values */
-  perY    = (double *) Calloc(nY*N, double);
+  perY    = (double *) R_Calloc(nY*N, double);
 
   /* number of permutations for each gene */
-  nPer0   = (int *) Calloc(nY, double);
+  nPer0   = (int *) R_Calloc(nY, double);
 
   /* pernutation index */
-  perm1   = (int *) Calloc(N, int);
+  perm1   = (int *) R_Calloc(N, int);
   
 
   /* initial permutation p-value */
@@ -714,18 +714,18 @@ void glmEQTL_permute (int* dims, double* Y, double* X, double* Z, double *z1,
    * variables to be used by glmEQTL_max1
    */  
   
-  Free(Xb);
-  Free(fitted0);
-  Free(fitted1);
-  Free(fitted2);
-  Free(resid);
-  Free(weights);
-  Free(offsetN);
+  R_Free(Xb);
+  R_Free(fitted0);
+  R_Free(fitted1);
+  R_Free(fitted2);
+  R_Free(resid);
+  R_Free(weights);
+  R_Free(offsetN);
 
-  Free(best_m0);
-  Free(pval0);
-  Free(perY);
-  Free(nPer0);
-  Free(perm1);
+  R_Free(best_m0);
+  R_Free(pval0);
+  R_Free(perY);
+  R_Free(nPer0);
+  R_Free(perm1);
   
 }

@@ -226,7 +226,7 @@ void pileup_bam(char **Rinput,int* Rnum_inp,
         // shouldn't get here
       default:
 		Rprintf("%c, %d", op.Type, op.Length);
-        error("sorry, did not expect to see this character in cigar\n");
+        Rf_error("sorry, did not expect to see this character in cigar\n");
       }
     }
     newmin=al1.Position;

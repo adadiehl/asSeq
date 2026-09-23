@@ -757,7 +757,7 @@ void glm_score_test(int* dims, double *Z, double *resid,
   P = dims[2];
   
   /* Work array */
-  Zr  = (double *) Calloc(N*P, double);
+  Zr  = (double *) R_Calloc(N*P, double);
   Zri = Zr;
   
   /* Main algorithm */
@@ -805,7 +805,7 @@ void glm_score_test(int* dims, double *Z, double *resid,
   *chi2 = test;
   *df   = rank;
   
-  Free(Zr);
+  R_Free(Zr);
 }
 
 /**********************************************************************

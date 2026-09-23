@@ -196,7 +196,7 @@ void filter_bam(char **Rinput,int *Rnum_inp, char **Routput,
         if (! isSame) {
           cout<<al1.Name<<endl;
           cout<<al2.Name<<endl;
-          error("expect a paired-read, but see something else\n");
+          Rf_error("expect a paired-read, but see something else\n");
         }
         
         keepIt2=1;

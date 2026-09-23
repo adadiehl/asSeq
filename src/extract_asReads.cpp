@@ -266,7 +266,7 @@ void extract_asReads(char **Rinput, char **Routput, char ** RsnpList,
         if (! isSame) {
           cout<<al1.Name<<endl;
           cout<<al2.Name<<endl;
-          error("expect a paired-read, but see something else\n");
+          Rf_error("expect a paired-read, but see something else\n");
         }
         
         keepIt2=1;
@@ -398,7 +398,7 @@ void extract_asReads(char **Rinput, char **Routput, char ** RsnpList,
           default:
             cout << al1.Name << endl;
             Rprintf("%c, %d\n", op.Type, op.Length);
-            error("sorry, did not expect to see this character in cigar\n");
+            Rf_error("sorry, did not expect to see this character in cigar\n");
         }
       }
       
@@ -512,7 +512,7 @@ void extract_asReads(char **Rinput, char **Routput, char ** RsnpList,
           default:
             cout << al1.Name << endl;
             Rprintf("%c, %d", op.Type, op.Length);
-            error("sorry, did not expect to see this character in cigar\n");
+            Rf_error("sorry, did not expect to see this character in cigar\n");
           }
 	    }
       
@@ -567,7 +567,7 @@ void extract_asReads(char **Rinput, char **Routput, char ** RsnpList,
           default:
             cout << al1.Name << endl;
             Rprintf("%c, %d", op.Type, op.Length);
-            error("sorry, did not expect to see this character in cigar\n");
+            Rf_error("sorry, did not expect to see this character in cigar\n");
           }
       }
       
