@@ -40,8 +40,9 @@ samples to those present in all matrices and the VCF.
 
 trecase options:
   --output-tag=STR        Prefix for output files [required]. Writes
-                          STR_eqtl.txt, STR_freq.txt, and STR_eqtl_annotated.txt
-                          (eqtl results with gene and marker IDs).
+                          STR_eqtl.txt, STR_freq.txt, STR_eqtl_annotated.txt
+                          (eqtl results with gene and marker IDs), and
+                          STR_genes.txt (see below).
   --p-cut=NUM             Only save associations with p-value < p-cut. Required
                           unless --permute is given; with --permute, the
                           nominal scan is only run if --p-cut is supplied.
@@ -58,6 +59,15 @@ trecase options:
   --transTestP=NUM        [default 0.05]
   --trace=INT             [default 1]
   --maxit=INT             [default 100]
+
+STR_genes.txt lists the tested genes in the order trecase sees them, so
+GeneRowID matches GeneRowID in STR_eqtl.txt and gene i in trecase trace
+messages is GeneRowID i + 1. Columns: GeneRowID, GeneID, Chrom, TSS,
+n_AS_samples (samples with at least --min-AS-reads allele-specific reads),
+TReC_baseline ("ok" or "failed") and ASE_baseline ("ok", "failed", or
+"insufficient_data" when n_AS_samples < --min-AS-sample). Genes whose ASE
+baseline is not "ok" are tested with the TReC model only. The baseline
+columns are NA if only --permute was run.
 
 Permutation options (asSeq::trecaseP):
   --permute               Estimate gene-level permutation p-values for the
@@ -442,11 +452,40 @@ runNominal <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
                 sep = "\t", quote = FALSE, row.names = FALSE)
   }
 
-  failed <- sum(res$yFailBaselineModel != 0)
-  if (failed > 0) {
-    message(sprintf("Baseline model failed for %d genes", failed))
-  }
   if (res$succeed != 1) die("trecase did not complete successfully")
+  res$yFailBaselineModel
+}
+
+# Write the tested genes and the outcome of their baseline model fits.
+# yFail is trecase's yFailBaselineModel (1 = TReC failed, 2 = ASE not used,
+# 3 = both), or NULL if the nominal scan was not run.
+writeGenes <- function(Y1, Y2, genes, chrom, ePos, yFail, opts) {
+  nAS <- colSums(Y1 + Y2 >= opts[["min-as-reads"]])
+  out <- data.frame(GeneRowID = seq_along(genes), GeneID = genes,
+                    Chrom = chrom, TSS = ePos, n_AS_samples = nAS,
+                    TReC_baseline = NA, ASE_baseline = NA,
+                    stringsAsFactors = FALSE)
+  if (!is.null(yFail)) {
+    trecFail <- yFail %% 2 == 1
+    aseOff <- yFail >= 2
+    tooFew <- nAS < opts[["min-as-sample"]]
+    out$TReC_baseline <- ifelse(trecFail, "failed", "ok")
+    out$ASE_baseline <- ifelse(!aseOff, "ok",
+                               ifelse(tooFew, "insufficient_data", "failed"))
+    if (any(trecFail)) {
+      message(sprintf("Baseline TReC model failed for %d genes", sum(trecFail)))
+    }
+    if (any(aseOff & !tooFew)) {
+      message(sprintf("Baseline ASE model failed for %d genes (tested with TReC only)",
+                      sum(aseOff & !tooFew)))
+    }
+    if (any(aseOff & tooFew)) {
+      message(sprintf("%d genes had too few samples with allele-specific reads for ASE (tested with TReC only)",
+                      sum(aseOff & tooFew)))
+    }
+  }
+  write.table(out, sprintf("%s_genes.txt", opts[["output-tag"]]),
+              sep = "\t", quote = FALSE, row.names = FALSE, na = "NA")
 }
 
 runPermutation <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
@@ -522,6 +561,9 @@ main <- function() {
   if (!is.null(offset)) samples <- intersect(samples, names(offset))
 
   # genes shared by all expression matrices and the TSS file
+  if (any(is.na(tss$chr))) {
+    message(sprintf("Dropped %d genes on unrecognized contigs in the TSS BED", sum(is.na(tss$chr))))
+  }
   tss <- tss[!is.na(tss$chr), ]
   exChr <- opts[["exclude-chroms"]]
   if (!is.null(exChr)) {
@@ -554,6 +596,7 @@ main <- function() {
   tss <- tss[match(genes, tss$gene), ]
   eChr <- as.numeric(tss$chr)
   ePos <- as.numeric(tss$pos)
+  eChrName <- tss$chrom
   mChr <- as.numeric(geno$mChr)
   mPos <- geno$mPos
   mID  <- geno$mID
@@ -567,6 +610,7 @@ main <- function() {
       Y <- Y[, !lowY, drop = FALSE]; Y1 <- Y1[, !lowY, drop = FALSE]
       Y2 <- Y2[, !lowY, drop = FALSE]
       eChr <- eChr[!lowY]; ePos <- ePos[!lowY]; genes <- genes[!lowY]
+      eChrName <- eChrName[!lowY]
     }
     lowZ <- apply(Z, 2, var) < cv
     if (any(lowZ)) {
@@ -579,12 +623,14 @@ main <- function() {
   }
   message(sprintf("Testing %d genes and %d variants", ncol(Y), ncol(Z)))
 
+  yFail <- NULL
   if (!is.null(opts[["p-cut"]])) {
-    runNominal(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes, mID, opts)
+    yFail <- runNominal(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes, mID, opts)
   }
   if (opts[["permute"]]) {
     runPermutation(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes, mID, opts)
   }
+  writeGenes(Y1, Y2, genes, eChrName, ePos, yFail, opts)
   message("Done")
 }
 
