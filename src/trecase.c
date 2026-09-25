@@ -561,7 +561,8 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
   fprintf(fo, "TReC_b\tTReC_Chisq\tTReC_df\tTReC_Pvalue\t");
   fprintf(fo, "ASE_b\tASE_Chisq\tASE_df\tASE_Pvalue\t");
   fprintf(fo, "Joint_b\tJoint_Chisq\tJoint_df\tJoint_Pvalue\t");
-  fprintf(fo, "n_TReC\tn_ASE\tn_ASE_Het\ttrans_Chisq\ttrans_Pvalue\tfinal_Pvalue\n");
+  fprintf(fo, "n_TReC\tn_ASE\tn_ASE_Het\ttrans_Chisq\ttrans_Pvalue\tfinal_Pvalue\t");
+  fprintf(fo, "TReC_fallback\n");
 
   /* **********************************************************
    * identifify eQTL gene by gene
@@ -1310,16 +1311,24 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
 
         if(pvalTrans < *transTestP || pvalTrans > 1.0001){
           if (pvalTReC > 1.0001) {
-            fprintf(fo, "NA\n");
+            fprintf(fo, "NA\t");
           }else{
-            fprintf(fo, "%.2e\n", pvalTReC);
+            fprintf(fo, "%.2e\t", pvalTReC);
           }
         }else {
           if (pvalJoint > 1.0001) {
-            fprintf(fo, "NA\n");
+            fprintf(fo, "NA\t");
           }else{
-            fprintf(fo, "%.2e\n", pvalJoint);
+            fprintf(fo, "%.2e\t", pvalJoint);
           }
+        }
+
+        /* whether TReC was fitted by glmNB with a log-linear genotype
+         * effect because glmNBlog failed */
+        if (useTReC_j) {
+          fprintf(fo, "%d\n", 1 - adjZ);
+        }else{
+          fprintf(fo, "NA\n");
         }
 
       }

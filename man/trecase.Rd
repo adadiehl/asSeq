@@ -119,7 +119,12 @@ trecase(Y, Y1, Y2, X, Z, output.tag, p.cut, offset=NULL,
  TReC model, ASE model, and Joint (TReCASE) model. 
  The column of pvalFinal equals to the TReC pvalue if 
  the eQTL is trans-eQTL by hypothesis testing, and 
- equals to the TReCASE p-value otherwise
+ equals to the TReCASE p-value otherwise. 
+ The column TReC_fallback is 1 if the TReC model could not be fitted 
+ with the allele-specific (additive) genotype effect and was instead 
+ fitted by a negative binomial GLM with genotype as a log-linear covariate. 
+ In that case TReC_b is on the log-linear scale and the joint model is 
+ not fitted. It is 0 otherwise, and NA if the TReC model was not fitted.
  
  The other file (output.tag_freq.txt) includes a frequency table 
  of all the p-values for TReC model, ASE model and Joint model.

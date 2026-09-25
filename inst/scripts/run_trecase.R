@@ -60,6 +60,11 @@ trecase options:
   --trace=INT             [default 1]
   --maxit=INT             [default 100]
 
+In STR_eqtl.txt, TReC_fallback is 1 for pairs whose TReC model could not
+be fitted with the allelic genotype effect and was refitted as a standard
+negative binomial GLM (TReC_b is then on the log-linear scale and the joint
+model is not fitted), 0 otherwise, and NA if TReC was not fitted.
+
 STR_genes.txt lists the tested genes in the order trecase sees them, so
 GeneRowID matches GeneRowID in STR_eqtl.txt and gene i in trecase trace
 messages is GeneRowID i + 1. Columns: GeneRowID, GeneID, Chrom, TSS,
