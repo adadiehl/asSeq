@@ -92,11 +92,17 @@ Input handling options:
                           Drop genes/variants whose variance across samples is
                           below --converge (trecase stops on these otherwise)
                           [default TRUE]
+  --exclude-chroms=LIST   Comma-separated chromosomes to exclude, for both
+                          genes and variants (e.g. X,Y,M). Names are matched
+                          after the conversion described below, so X, chrX
+                          and 23 are equivalent.
   -h, --help              Show this message and exit
 
 Chromosome names are converted to integers: a leading "chr" is removed and
 X, Y and M/MT are coded as 23, 24 and 25. Genes and variants on other contigs
-are dropped. Options may be given as --name=value or --name value; option
+are dropped. With --local-only=TRUE, variants on chromosomes with no genes to
+test are dropped before genotypes are parsed, since they cannot be local to
+any gene. Options may be given as --name=value or --name value; option
 names are case-insensitive and "." or "_" may be used in place of "-".
 ')
 }
@@ -128,7 +134,8 @@ defaults <- list(
   "np"                = "20,100,500,1000,2500",
   "aim-p"             = "0.5,0.2,0.1,0.05,0.02",
   "confidence-p"      = 0.01,
-  "seed"              = NULL
+  "seed"              = NULL,
+  "exclude-chroms"    = NULL
 )
 
 # options that may be given without a value
@@ -216,6 +223,14 @@ parseArgs <- function(args) {
   if (!opts[["unphased"]] %in% c("error", "drop")) {
     die("--unphased must be 'error' or 'drop'")
   }
+  if (!is.null(opts[["exclude-chroms"]])) {
+    ex <- strsplit(opts[["exclude-chroms"]], ",", fixed = TRUE)[[1]]
+    exInt <- chrToInt(trimws(ex))
+    if (length(ex) == 0 || any(is.na(exInt))) {
+      die(sprintf("--exclude-chroms: unrecognized chromosome in '%s'", opts[["exclude-chroms"]]))
+    }
+    opts[["exclude-chroms"]] <- exInt
+  }
   opts[["np"]] <- parseNumList(opts[["np"]], "np")
   opts[["aim-p"]] <- parseNumList(opts[["aim-p"]], "aim-p")
   if (opts[["permute"]]) {
@@ -287,7 +302,9 @@ readTSS <- function(file) {
 
 # Read a VCF and return the phased genotype matrix Z (samples x variants)
 # along with mChr and mPos.
-readVCF <- function(file, samples, unphased, dropMissing) {
+# keepChr / dropChr: integer chromosome codes to keep / drop, or NULL.
+readVCF <- function(file, samples, unphased, dropMissing, keepChr = NULL,
+                    dropChr = NULL) {
   con <- gzfile(file, "r")
   nMeta <- 0
   repeat {
@@ -318,6 +335,17 @@ readVCF <- function(file, samples, unphased, dropMissing) {
   }
   vcf <- vcf[ok, , drop = FALSE]
   chr <- chr[ok]
+
+  if (!is.null(keepChr) || !is.null(dropChr)) {
+    ok <- !chr %in% dropChr
+    if (!is.null(keepChr)) ok <- ok & chr %in% keepChr
+    if (any(!ok)) {
+      message(sprintf("Dropped %d variants on chromosomes that are excluded or have no genes to test",
+                      sum(!ok)))
+    }
+    vcf <- vcf[ok, , drop = FALSE]
+    chr <- chr[ok]
+  }
 
   # locate GT within FORMAT
   fmt <- strsplit(vcf$FORMAT, ":", fixed = TRUE)
@@ -493,17 +521,30 @@ main <- function() {
                                     colnames(Y2m), colnames(Xm)))
   if (!is.null(offset)) samples <- intersect(samples, names(offset))
 
-  geno <- readVCF(files$vcf, samples, opts[["unphased"]], opts[["drop-missing"]])
-  samples <- rownames(geno$Z)
-  if (length(samples) == 0) die("no samples in common across all inputs")
-  message(sprintf("Using %d samples present in all inputs", length(samples)))
-
   # genes shared by all expression matrices and the TSS file
   tss <- tss[!is.na(tss$chr), ]
+  exChr <- opts[["exclude-chroms"]]
+  if (!is.null(exChr)) {
+    ex <- tss$chr %in% exChr
+    if (any(ex)) message(sprintf("Dropped %d genes on excluded chromosomes", sum(ex)))
+    tss <- tss[!ex, ]
+  }
   genes <- Reduce(intersect, list(rownames(Ym), rownames(Y1m),
                                   rownames(Y2m), tss$gene))
   if (length(genes) == 0) die("no genes in common across expression matrices and TSS BED")
   message(sprintf("Using %d genes present in all expression matrices and the TSS BED", length(genes)))
+
+  # with local-only testing, variants can only be tested on chromosomes
+  # that have genes
+  keepChr <- NULL
+  if (opts[["local-only"]]) keepChr <- unique(tss$chr[match(genes, tss$gene)])
+
+  geno <- readVCF(files$vcf, samples, opts[["unphased"]], opts[["drop-missing"]],
+                  keepChr, exChr)
+  samples <- rownames(geno$Z)
+  if (length(samples) == 0) die("no samples in common across all inputs")
+  if (ncol(geno$Z) == 0) die("no variants left to test")
+  message(sprintf("Using %d samples present in all inputs", length(samples)))
 
   Y  <- t(Ym[genes, samples, drop = FALSE])
   Y1 <- t(Y1m[genes, samples, drop = FALSE])
