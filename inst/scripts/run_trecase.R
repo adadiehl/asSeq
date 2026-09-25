@@ -42,7 +42,9 @@ trecase options:
   --output-tag=STR        Prefix for output files [required]. Writes
                           STR_eqtl.txt, STR_freq.txt, and STR_eqtl_annotated.txt
                           (eqtl results with gene and marker IDs).
-  --p-cut=NUM             Only save associations with p-value < p-cut [required]
+  --p-cut=NUM             Only save associations with p-value < p-cut. Required
+                          unless --permute is given; with --permute, the
+                          nominal scan is only run if --p-cut is supplied.
   --offset=FILE           Per-sample offset: two-column file of sample ID and
                           offset value (optional header)
   --min-AS-reads=INT      [default 5]
@@ -56,6 +58,30 @@ trecase options:
   --transTestP=NUM        [default 0.05]
   --trace=INT             [default 1]
   --maxit=INT             [default 100]
+
+Permutation options (asSeq::trecaseP):
+  --permute               Estimate gene-level permutation p-values for the
+                          best local variant of each gene and write
+                          STR_perm.txt. Requires --local-only=TRUE.
+  --np-max=INT            Maximum number of permutations [default 5000]
+  --np=LIST               Comma-separated, ascending numbers of permutations
+                          at which to check for early stopping
+                          [default 20,100,500,1000,2500]
+  --aim-p=LIST            Comma-separated, descending p-value thresholds
+                          matching --np. Permutation stops for a gene once its
+                          permutation p-value is confidently above aim-p[i]
+                          after np[i] permutations [default 0.5,0.2,0.1,0.05,0.02]
+  --confidence-p=NUM      Binomial p-value used for the early stopping decision
+                          [default 0.01]
+  --seed=INT              Random seed for permutations
+
+  STR_perm.txt has one row per gene. For each of the models trec, ase,
+  trecase and trec_trecase (TReC p-value for trans-eQTL, TReCASE otherwise) it
+  reports the best marker, its nominal p-value (pval_*), permutation p-value
+  (perP_*, the fraction of permutations with a better minimum p-value, which
+  can be 0), number of permutations (nuse_*), and a Benjamini-Hochberg q-value
+  across genes (qval_*) computed from (k + 1) / (n + 1), where k is the number
+  of permutations with a better minimum p-value and n is nuse_*.
 
 Input handling options:
   --unphased=STR          How to treat unphased heterozygous calls (0/1):
@@ -96,8 +122,17 @@ defaults <- list(
   "maxit"             = 100,
   "unphased"          = "error",
   "drop-missing"      = FALSE,
-  "drop-low-variance" = TRUE
+  "drop-low-variance" = TRUE,
+  "permute"           = FALSE,
+  "np-max"            = 5000,
+  "np"                = "20,100,500,1000,2500",
+  "aim-p"             = "0.5,0.2,0.1,0.05,0.02",
+  "confidence-p"      = 0.01,
+  "seed"              = NULL
 )
+
+# options that may be given without a value
+flags <- c("permute")
 
 die <- function(...) {
   message("Error: ", ...)
@@ -117,6 +152,14 @@ parseNum <- function(x, name) {
   v
 }
 
+parseNumList <- function(x, name) {
+  v <- suppressWarnings(as.numeric(strsplit(x, ",", fixed = TRUE)[[1]]))
+  if (length(v) == 0 || any(is.na(v))) {
+    die(sprintf("--%s expects a comma-separated list of numbers, got '%s'", name, x))
+  }
+  v
+}
+
 parseArgs <- function(args) {
   opts <- defaults
   pos <- character(0)
@@ -132,6 +175,9 @@ parseArgs <- function(args) {
       if (grepl("=", a, fixed = TRUE)) {
         key <- sub("=.*$", "", a)
         val <- sub("^[^=]*=", "", a)
+      } else if (tolower(gsub("[._]", "-", a)) %in% flags) {
+        key <- a
+        val <- "TRUE"
       } else {
         key <- a
         if (i == length(args)) die(sprintf("option --%s requires a value", key))
@@ -152,11 +198,16 @@ parseArgs <- function(args) {
     die(sprintf("expected 6 positional arguments, got %d", length(pos)))
   }
   if (is.null(opts[["output-tag"]])) die("--output-tag is required")
-  if (is.null(opts[["p-cut"]])) die("--p-cut is required")
+  opts[["permute"]] <- parseBool(as.character(opts[["permute"]]), "permute")
+  if (is.null(opts[["p-cut"]]) && !opts[["permute"]]) {
+    die("--p-cut is required unless --permute is given")
+  }
 
-  for (k in c("p-cut", "min-as-reads", "min-as-sample", "min-n-het",
+  if (!is.null(opts[["p-cut"]])) opts[["p-cut"]] <- parseNum(opts[["p-cut"]], "p-cut")
+  if (!is.null(opts[["seed"]])) opts[["seed"]] <- parseNum(opts[["seed"]], "seed")
+  for (k in c("min-as-reads", "min-as-sample", "min-n-het",
               "local-distance", "converge", "convergeglm", "scoretestp",
-              "transtestp", "trace", "maxit")) {
+              "transtestp", "trace", "maxit", "np-max", "confidence-p")) {
     opts[[k]] <- parseNum(opts[[k]], k)
   }
   for (k in c("local-only", "drop-missing", "drop-low-variance")) {
@@ -164,6 +215,17 @@ parseArgs <- function(args) {
   }
   if (!opts[["unphased"]] %in% c("error", "drop")) {
     die("--unphased must be 'error' or 'drop'")
+  }
+  opts[["np"]] <- parseNumList(opts[["np"]], "np")
+  opts[["aim-p"]] <- parseNumList(opts[["aim-p"]], "aim-p")
+  if (opts[["permute"]]) {
+    if (!opts[["local-only"]]) die("--permute requires --local-only=TRUE")
+    if (length(opts[["np"]]) != length(opts[["aim-p"]])) {
+      die("--np and --aim-p must have the same length")
+    }
+    if (any(diff(opts[["np"]]) <= 0)) die("--np must be strictly ascending")
+    if (any(diff(opts[["aim-p"]]) >= 0)) die("--aim-p must be strictly descending")
+    if (opts[["np-max"]] <= max(opts[["np"]])) die("--np-max must be larger than max(--np)")
   }
 
   names(pos) <- c("total", "hap1", "hap2", "covariates", "vcf", "bed")
@@ -319,6 +381,94 @@ readOffset <- function(file) {
 }
 
 # ------------------------------------------------------------
+# analyses
+# ------------------------------------------------------------
+
+runNominal <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
+                       genes, mID, opts) {
+  res <- trecase(Y, Y1, Y2, X, Z,
+                 output.tag     = opts[["output-tag"]],
+                 p.cut          = opts[["p-cut"]],
+                 offset         = offset,
+                 min.AS.reads   = opts[["min-as-reads"]],
+                 min.AS.sample  = opts[["min-as-sample"]],
+                 min.n.het      = opts[["min-n-het"]],
+                 local.only     = opts[["local-only"]],
+                 local.distance = opts[["local-distance"]],
+                 eChr = eChr, ePos = ePos, mChr = mChr, mPos = mPos,
+                 converge       = opts[["converge"]],
+                 convergeGLM    = opts[["convergeglm"]],
+                 scoreTestP     = opts[["scoretestp"]],
+                 transTestP     = opts[["transtestp"]],
+                 trace          = opts[["trace"]],
+                 maxit          = opts[["maxit"]])
+
+  # annotate results with gene and marker IDs
+  eqtlFile <- sprintf("%s_eqtl.txt", opts[["output-tag"]])
+  if (file.exists(eqtlFile)) {
+    eqtl <- read.delim(eqtlFile, check.names = FALSE, colClasses = "character")
+    annot <- data.frame(GeneID   = genes[as.integer(eqtl$GeneRowID)],
+                        MarkerID = mID[as.integer(eqtl$MarkerRowID)],
+                        eqtl, check.names = FALSE, stringsAsFactors = FALSE)
+    write.table(annot, sprintf("%s_eqtl_annotated.txt", opts[["output-tag"]]),
+                sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+
+  failed <- sum(res$yFailBaselineModel != 0)
+  if (failed > 0) {
+    message(sprintf("Baseline model failed for %d genes", failed))
+  }
+  if (res$succeed != 1) die("trecase did not complete successfully")
+}
+
+runPermutation <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
+                           genes, mID, opts) {
+  if (!is.null(opts[["seed"]])) set.seed(opts[["seed"]])
+
+  perm <- trecaseP(Y, Y1, Y2, X, Z,
+                   offset         = offset,
+                   min.AS.reads   = opts[["min-as-reads"]],
+                   min.AS.sample  = opts[["min-as-sample"]],
+                   min.n.het      = opts[["min-n-het"]],
+                   local.only     = opts[["local-only"]],
+                   local.distance = opts[["local-distance"]],
+                   eChr = eChr, ePos = ePos, mChr = mChr, mPos = mPos,
+                   converge       = opts[["converge"]],
+                   convergeGLM    = opts[["convergeglm"]],
+                   scoreTestP     = opts[["scoretestp"]],
+                   transTestP     = opts[["transtestp"]],
+                   np.max         = opts[["np-max"]],
+                   np             = opts[["np"]],
+                   aim.p          = opts[["aim-p"]],
+                   confidence.p   = opts[["confidence-p"]],
+                   trace          = opts[["trace"]],
+                   maxit          = opts[["maxit"]])
+
+  out <- data.frame(GeneID = genes[perm$geneID], stringsAsFactors = FALSE)
+  for (type in c("trec", "ase", "trecase", "trec_trecase")) {
+    perP <- perm[[paste0("perP_", type)]]
+    nuse <- perm[[paste0("nuse_", type)]]
+    # add-one estimate so that no gene gets a permutation p-value of 0
+    k <- round(perP * nuse)
+    out[[paste0("MarkerID_", type)]] <- mID[perm[[paste0("markerID_", type)]]]
+    out[[paste0("pval_", type)]] <- perm[[paste0("pval_", type)]]
+    out[[paste0("perP_", type)]] <- perP
+    out[[paste0("nuse_", type)]] <- nuse
+    out[[paste0("qval_", type)]] <- p.adjust((k + 1) / (nuse + 1), method = "BH")
+  }
+
+  # pval_* is 9 (or negative) when a gene could not be tested
+  for (type in c("trec", "ase", "trecase", "trec_trecase")) {
+    pv <- paste0("pval_", type)
+    out[[pv]][is.na(out[[paste0("perP_", type)]])] <- NA
+  }
+
+  write.table(out, sprintf("%s_perm.txt", opts[["output-tag"]]),
+              sep = "\t", quote = FALSE, row.names = FALSE, na = "NA")
+  message(sprintf("Wrote permutation results for %d genes", nrow(out)))
+}
+
+# ------------------------------------------------------------
 # main
 # ------------------------------------------------------------
 
@@ -388,39 +538,12 @@ main <- function() {
   }
   message(sprintf("Testing %d genes and %d variants", ncol(Y), ncol(Z)))
 
-  res <- trecase(Y, Y1, Y2, X, Z,
-                 output.tag     = opts[["output-tag"]],
-                 p.cut          = opts[["p-cut"]],
-                 offset         = offset,
-                 min.AS.reads   = opts[["min-as-reads"]],
-                 min.AS.sample  = opts[["min-as-sample"]],
-                 min.n.het      = opts[["min-n-het"]],
-                 local.only     = opts[["local-only"]],
-                 local.distance = opts[["local-distance"]],
-                 eChr = eChr, ePos = ePos, mChr = mChr, mPos = mPos,
-                 converge       = opts[["converge"]],
-                 convergeGLM    = opts[["convergeglm"]],
-                 scoreTestP     = opts[["scoretestp"]],
-                 transTestP     = opts[["transtestp"]],
-                 trace          = opts[["trace"]],
-                 maxit          = opts[["maxit"]])
-
-  # annotate results with gene and marker IDs
-  eqtlFile <- sprintf("%s_eqtl.txt", opts[["output-tag"]])
-  if (file.exists(eqtlFile)) {
-    eqtl <- read.delim(eqtlFile, check.names = FALSE, colClasses = "character")
-    annot <- data.frame(GeneID   = genes[as.integer(eqtl$GeneRowID)],
-                        MarkerID = mID[as.integer(eqtl$MarkerRowID)],
-                        eqtl, check.names = FALSE, stringsAsFactors = FALSE)
-    write.table(annot, sprintf("%s_eqtl_annotated.txt", opts[["output-tag"]]),
-                sep = "\t", quote = FALSE, row.names = FALSE)
+  if (!is.null(opts[["p-cut"]])) {
+    runNominal(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes, mID, opts)
   }
-
-  failed <- sum(res$yFailBaselineModel != 0)
-  if (failed > 0) {
-    message(sprintf("Baseline model failed for %d genes", failed))
+  if (opts[["permute"]]) {
+    runPermutation(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes, mID, opts)
   }
-  if (res$succeed != 1) die("trecase did not complete successfully")
   message("Done")
 }
 

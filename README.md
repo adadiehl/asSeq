@@ -43,7 +43,7 @@ Rscript $(Rscript -e 'cat(system.file("scripts/run_trecase.R", package="asSeq"))
     --output-tag=results --p-cut=0.05
 ```
 
-All other `trecase` arguments are available as options. Run with `--help` for details.
+All other `trecase` arguments are available as options. Add `--permute` to also estimate gene-level permutation p-values with `trecaseP` and Benjamini-Hochberg q-values across genes (written to `<tag>_perm.txt`); in this mode `--p-cut` is optional and the nominal scan runs only if it is given. Run with `--help` for details.
 
 ## geoP
 
