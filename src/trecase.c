@@ -972,8 +972,10 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
           }
           
           if((twoLL_bxj1 - twoLL_bxj0)/fabs(twoLL_bxj0) < -0.01){
-            Rprintf("\n  i=%d, j=%d, g=%d\n", i, j, g);
-            error("  likelihood decreases during update of b_xj\n");
+            warning("likelihood decreases during update of b_xj in joint model: i=%d, j=%d, g=%d; joint model skipped\n", 
+                    i, j, g);
+            useJointModel = 0;
+            break;
           }
           
           bxj_old = bxj_new;
@@ -1024,8 +1026,11 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
           if((twoLL_ase_joint1 - twoLL_ase_joint0)/fabs(twoLL_ase_joint0) < -0.01 ){
             Rprintf("\n  i=%d, j=%d, g=%d ", i, j, g);
             Rprintf("  theta_old=%e, theta_new=%e\n", theta_old, theta_new);
-            Rprintf("  twoLL(old, new)=(%e, %e)", twoLL_ase_joint0, twoLL_ase_joint1);
-            error("\n  likelihood decreases during update of theta in join modeling\n");
+            Rprintf("  twoLL(old, new)=(%e, %e)\n", twoLL_ase_joint0, twoLL_ase_joint1);
+            warning("likelihood decreases during update of theta in joint model: i=%d, j=%d, g=%d; joint model skipped\n", 
+                    i, j, g);
+            useJointModel = 0;
+            break;
           }
           
           theta_old = theta_new;
@@ -1080,8 +1085,11 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
           
           if((twoLL_trec_joint1 - twoLL_trec_joint0)/fabs(twoLL_trec_joint0) < -0.01){
             Rprintf("\n  i=%d, j=%d, g=%d ", i, j, g);
-            Rprintf("  twoLL(old, new)=(%e, %e)", twoLL_trec_joint0, twoLL_trec_joint1);
-            error("\n  likelihood decreases during update of phi in join modeling\n");
+            Rprintf("  twoLL(old, new)=(%e, %e)\n", twoLL_trec_joint0, twoLL_trec_joint1);
+            warning("likelihood decreases during update of phi in joint model: i=%d, j=%d, g=%d; joint model skipped\n", 
+                    i, j, g);
+            useJointModel = 0;
+            break;
           }
                     
           phi_old = phi_new;
@@ -1136,10 +1144,11 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
                   g, nless5, N, twoLL_trec0, twoLL_trec1);
           
           useTReC_j=0;
-          
+
           if (nless5 <= 0.75*N) {
-            error("likelihood decreases for TReC model: i=%d, j=%d, 2logL=(%.2e, %.2e), chisq=%.3e\n", 
-                  i, j, twoLL_trec0, twoLL_trec1, chisqTReC);
+            warning("likelihood decreases for TReC model: i=%d, j=%d, 2logL=(%.2e, %.2e), chisq=%.3e; TReC model skipped\n", 
+                    i, j, twoLL_trec0, twoLL_trec1, chisqTReC);
+            useJointModel = 0;
           }
           
         }else{
@@ -1177,13 +1186,15 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
        * calculate p-value for ASE model
        * *********************************************************/
       
+      if (useASE_j && twoLL_ase1 - twoLL_ase0 < -0.01) {
+        warning("likelihood decreases for ASE model: i=%d, j=%d, twoLL=(%.2e, %.2e), chisq=%.3e; ASE and joint models skipped\n", 
+                i, j, twoLL_ase0, twoLL_ase1, twoLL_ase1 - twoLL_ase0);
+        useASE_j = 0;
+        useJointModel = 0;
+      }
+
       if(useASE_j) {
         chisqASE = twoLL_ase1 - twoLL_ase0;
-        
-        if (chisqASE < -0.01) {
-          error("likelihood decreases for ASE model: i=%d, j=%d, twoLL=(%.2e, %.2e), chisq=%.3e\n", 
-                i, j, twoLL_ase0, twoLL_ase1, chisqASE);
-        }
         
         dfr_ASE = 1.0;
         if (fabs(th0) < 1e-7)  dfr_ASE += 1.0;
@@ -1215,6 +1226,14 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
        * calculate p-value for joint model
        * *********************************************************/
       
+      if (useJointModel && twoLL1 - twoLL0 < -0.01) {
+        Rprintf("twoLL_trec=(%.3e, %.3e) ",  twoLL_trec0, twoLL_trec_joint1);
+        Rprintf("twoLL_ase=(%.3e, %.3e) \n", twoLL_ase0,  twoLL_ase_joint1);
+        warning("wrong twoLL for joint model i=%d, j=%d, chisq=%.3e; joint model skipped\n", 
+                i, j, twoLL1 - twoLL0);
+        useJointModel = 0;
+      }
+
       if(useJointModel){
 
         chisqTrans = twoLL_ase1 + twoLL_trec1 - twoLL1;
@@ -1231,14 +1250,6 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
         }
         
         chisqJoint = twoLL1 - twoLL0;
-
-        if (chisqJoint < -0.01) {
-          Rprintf("twoLL_trec=(%.3e, %.3e) ",  twoLL_trec0, twoLL_trec_joint1);
-          Rprintf("twoLL_ase=(%.3e, %.3e) \n", twoLL_ase0,  twoLL_ase_joint1);
-          
-          error("wrong twoLL for joint model i=%d, j=%d, chisq=%.3e\n", 
-                i, j, chisqJoint);
-        }
 
         dfr_joint_ASE = 1.0;
         if (fabs(th0) < 1e-7)  dfr_joint_ASE += 1.0;
@@ -1291,7 +1302,13 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
 //        fprintRow(fo, bxj_old,  chisqJoint, dfr_Joint, pvalJoint);
 //        fprintf(fo, "%d\t%d\t%d\t", df0+nX+1, h0, h1);
         fprintf(fo, "%d\t%d\t", i+1, j+1);
-        fprintf(fo, "%.2e\t%.2e\t", phi_new, theta_new);
+        /* over-dispersion estimates come from the joint model, and are
+         * left over from an earlier pair when it was not fitted */
+        if (useJointModel) {
+          fprintf(fo, "%.2e\t%.2e\t", phi_new, theta_new);
+        }else{
+          fprintf(fo, "NA\tNA\t");
+        }
         fprintRow(fo, bxj_trec, chisqTReC,  dfr_TReC,  pvalTReC);
         fprintRow(fo, bxj_ase,  chisqASE,   dfr_ASE,   pvalASE);
         fprintRow(fo, bxj_old,  chisqJoint, dfr_Joint, pvalJoint);
@@ -1977,8 +1994,10 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
           }
           
           if((twoLL_bxj1 - twoLL_bxj0)/fabs(twoLL_bxj0) < -0.01){
-            Rprintf("\n  i=%d, j=%d, g=%d\n", i, j, g);
-            error("  likelihood decreases during update of b_xj\n");
+            warning("likelihood decreases during update of b_xj in joint model: i=%d, j=%d, g=%d; joint model skipped\n", 
+                    i, j, g);
+            useJointModel = 0;
+            break;
           }
           
           bxj_old = bxj_new;
@@ -2029,8 +2048,11 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
           if((twoLL_ase_joint1 - twoLL_ase_joint0)/fabs(twoLL_ase_joint0) < -0.01 ){
             Rprintf("\n  i=%d, j=%d, g=%d ", i, j, g);
             Rprintf("  theta_old=%e, theta_new=%e\n", theta_old, theta_new);
-            Rprintf("  twoLL(old, new)=(%e, %e)", twoLL_ase_joint0, twoLL_ase_joint1);
-            error("\n  likelihood decreases during update of theta in join modeling\n");
+            Rprintf("  twoLL(old, new)=(%e, %e)\n", twoLL_ase_joint0, twoLL_ase_joint1);
+            warning("likelihood decreases during update of theta in joint model: i=%d, j=%d, g=%d; joint model skipped\n", 
+                    i, j, g);
+            useJointModel = 0;
+            break;
           }
           
           theta_old = theta_new;
@@ -2085,8 +2107,11 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
           
           if((twoLL_trec_joint1 - twoLL_trec_joint0)/fabs(twoLL_trec_joint0) < -0.01){
             Rprintf("\n  i=%d, j=%d, g=%d ", i, j, g);
-            Rprintf("  twoLL(old, new)=(%e, %e)", twoLL_trec_joint0, twoLL_trec_joint1);
-            error("\n  likelihood decreases during update of phi in join modeling\n");
+            Rprintf("  twoLL(old, new)=(%e, %e)\n", twoLL_trec_joint0, twoLL_trec_joint1);
+            warning("likelihood decreases during update of phi in joint model: i=%d, j=%d, g=%d; joint model skipped\n", 
+                    i, j, g);
+            useJointModel = 0;
+            break;
           }
           
           phi_old = phi_new;
@@ -2144,8 +2169,9 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
           useTReC_j=0;
 
           if (nless5 <= 0.75*N) {
-            error("likelihood decreases for TReC model: i=%d, j=%d, 2logL=(%.2e, %.2e), chisq=%.3e\n", 
-                  i, j, twoLL_trec0, twoLL_trec1, chisqTReC);
+            warning("likelihood decreases for TReC model: i=%d, j=%d, 2logL=(%.2e, %.2e), chisq=%.3e; TReC model skipped\n", 
+                    i, j, twoLL_trec0, twoLL_trec1, chisqTReC);
+            useJointModel = 0;
           }
           
         }else{
@@ -2179,13 +2205,15 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
        * calculate p-value for ASE model
        * *********************************************************/
       
+      if (useASE_j && twoLL_ase1 - twoLL_ase0 < -0.01) {
+        warning("likelihood decreases for ASE model: i=%d, j=%d, 2logL=(%.2e, %.2e), chisq=%.3e; ASE and joint models skipped\n", 
+                i, j, twoLL_ase0, twoLL_ase1, twoLL_ase1 - twoLL_ase0);
+        useASE_j = 0;
+        useJointModel = 0;
+      }
+
       if(useASE_j) {
         chisqASE = twoLL_ase1 - twoLL_ase0;
-        
-        if (chisqASE < -0.01) {
-          error("likelihood decreases for ASE model: i=%d, j=%d, 2logL=(%.2e, %.2e), chisq=%.3e\n", 
-                i, j, twoLL_ase0, twoLL_ase1, chisqASE);
-        }
         
         dfr_ASE = 1.0;
         if (fabs(th0) < 1e-7)  dfr_ASE += 1.0;
@@ -2214,6 +2242,14 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
        * calculate p-value for joint model
        * *********************************************************/
       
+      if (useJointModel && twoLL1 - twoLL0 < -0.01) {
+        Rprintf("twoLL_trec=(%.3e, %.3e) ",  twoLL_trec0, twoLL_trec_joint1);
+        Rprintf("twoLL_ase=(%.3e, %.3e) \n", twoLL_ase0,  twoLL_ase_joint1);
+        warning("wrong twoLL for joint model i=%d, j=%d, chisq=%.3e; joint model skipped\n", 
+                i, j, twoLL1 - twoLL0);
+        useJointModel = 0;
+      }
+
       if(useJointModel){
         
         chisqTrans = twoLL_ase1 + twoLL_trec1 - twoLL1;
@@ -2230,14 +2266,6 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
         }
         
         chisqJoint = twoLL1 - twoLL0;
-        
-        if (chisqJoint < -0.01) {
-          Rprintf("twoLL_trec=(%.3e, %.3e) ",  twoLL_trec0, twoLL_trec_joint1);
-          Rprintf("twoLL_ase=(%.3e, %.3e) \n", twoLL_ase0,  twoLL_ase_joint1);
-          
-          error("wrong twoLL for joint model i=%d, j=%d, chisq=%.3e\n", 
-                i, j, chisqJoint);
-        }
         
         dfr_joint_ASE = 1.0;
         if (fabs(th0) < 1e-7)  dfr_joint_ASE += 1.0;

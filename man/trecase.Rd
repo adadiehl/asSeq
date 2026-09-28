@@ -107,6 +107,12 @@ trecase(Y, Y1, Y2, X, Z, output.tag, p.cut, offset=NULL,
   Joint model of both total expression and allele-specific expression will 
   only be attempted if there are enough allele-specific reads in enough 
   samples, which are specified in parameters min.AS.reads, and min.AS.sample. 
+
+  If a model fit for a gene-marker pair is numerically degenerate (the 
+  log-likelihood of the alternative model is lower than that of the null 
+  model), that model is skipped for the pair with a warning, rather than 
+  stopping the whole analysis. A failed TReC or ASE fit also skips the joint 
+  model for that pair. The same applies to \code{trecaseP}.
 }
 \value{
  The function return 1 if no error occurs.
@@ -114,7 +120,8 @@ trecase(Y, Y1, Y2, X, Z, output.tag, p.cut, offset=NULL,
  one file (output.tag_eqtl.txt) stores the eQTL mapping result that
  pass the p-value threshold p.cut, including gene ID,
  marker ID, Negative Binomial over-dispersion for TReC part of the model, 
- Beta Binomial over-dispersion for ASE model, 
+ Beta Binomial over-dispersion for ASE model (both from the joint model, 
+ and NA for pairs where the joint model is not fitted), 
  Chi-square statistic and p-value for
  TReC model, ASE model, and Joint (TReCASE) model. 
  The column of pvalFinal equals to the TReC pvalue if 

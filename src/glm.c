@@ -1551,7 +1551,10 @@ int glmNBlog(int *dimsNew, int *nIter, double *pY, double *z,
         break;
       }
       
-      error("\n  likelihood decreases during update of b_xj in glmNBlog\n");
+      /* report failure so the caller refits with glmNB */
+      warning("likelihood decreases during update of b_xj in glmNBlog; using glmNB fallback\n");
+      succeed=0;
+      break;
     }
     
     bxj_old = bxj_new;
