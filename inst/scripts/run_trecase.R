@@ -41,8 +41,8 @@ samples to those present in all matrices and the VCF.
 trecase options:
   --output-tag=STR        Prefix for output files [required]. Writes
                           STR_eqtl.txt, STR_freq.txt, STR_eqtl_annotated.txt
-                          (eqtl results with gene and marker IDs), and
-                          STR_genes.txt (see below).
+                          (eqtl results with gene and marker IDs),
+                          STR_genes.txt and STR_markers.txt (see below).
   --p-cut=NUM             Only save associations with p-value < p-cut. Required
                           unless --permute is given; with --permute, the
                           nominal scan is only run if --p-cut is supplied.
@@ -72,7 +72,18 @@ n_AS_samples (samples with at least --min-AS-reads allele-specific reads),
 TReC_baseline ("ok" or "failed") and ASE_baseline ("ok", "failed", or
 "insufficient_data" when n_AS_samples < --min-AS-sample). Genes whose ASE
 baseline is not "ok" are tested with the TReC model only. The baseline
-columns are NA if only --permute was run.
+columns are NA if only --permute was run. It is first written before any
+model fitting (with NA baseline columns) and rewritten when the run finishes.
+
+STR_markers.txt lists the tested variants in the order trecase sees them
+(MarkerRowID, MarkerID, Chrom, Pos), so MarkerRowID matches MarkerRowID in
+STR_eqtl.txt and variant j in trace messages is MarkerRowID j + 1. It is
+written before any model fitting.
+
+With --permute, gene indices (i) in trace and warning messages refer to
+GeneRowID only in the first stage of permutations. Later stages refit only
+the genes still being permuted, so i indexes that subset. Variant indices (j)
+always match MarkerRowID - 1.
 
 Permutation options (asSeq::trecaseP):
   --permute               Estimate gene-level permutation p-values for the
@@ -103,6 +114,12 @@ Input handling options:
                           "error" or "drop" (drop the variant) [default error]
   --drop-missing=BOOL     Drop variants with missing genotypes instead of
                           stopping with an error [default FALSE]
+  --min-expr-reads=INT    Minimum total read count for a sample to count as
+                          expressing a gene; used with --min-expr-samples
+                          [default 0, no expression filter]
+  --min-expr-samples=NUM  Drop genes with fewer than this many samples having
+                          at least --min-expr-reads total reads. Values below
+                          1 are a fraction of samples [default 0]
   --drop-low-variance=BOOL
                           Drop genes/variants whose variance across samples is
                           below --converge (trecase stops on these otherwise)
@@ -150,7 +167,9 @@ defaults <- list(
   "aim-p"             = "0.5,0.2,0.1,0.05,0.02",
   "confidence-p"      = 0.01,
   "seed"              = NULL,
-  "exclude-chroms"    = NULL
+  "exclude-chroms"    = NULL,
+  "min-expr-reads"    = 0,
+  "min-expr-samples"  = 0
 )
 
 # options that may be given without a value
@@ -229,7 +248,8 @@ parseArgs <- function(args) {
   if (!is.null(opts[["seed"]])) opts[["seed"]] <- parseNum(opts[["seed"]], "seed")
   for (k in c("min-as-reads", "min-as-sample", "min-n-het",
               "local-distance", "converge", "convergeglm", "scoretestp",
-              "transtestp", "trace", "maxit", "np-max", "confidence-p")) {
+              "transtestp", "trace", "maxit", "np-max", "confidence-p",
+              "min-expr-reads", "min-expr-samples")) {
     opts[[k]] <- parseNum(opts[[k]], k)
   }
   for (k in c("local-only", "drop-missing", "drop-low-variance")) {
@@ -408,8 +428,8 @@ readVCF <- function(file, samples, unphased, dropMissing, keepChr = NULL,
   Z <- t(Z[keep, , drop = FALSE])
   colnames(Z) <- ids[keep]
 
-  list(Z = Z, mChr = chr[keep], mPos = as.numeric(vcf$POS[keep]),
-       mID = ids[keep])
+  list(Z = Z, mChr = chr[keep], mChrName = vcf$CHROM[keep],
+       mPos = as.numeric(vcf$POS[keep]), mID = ids[keep])
 }
 
 readOffset <- function(file) {
@@ -491,6 +511,13 @@ writeGenes <- function(Y1, Y2, genes, chrom, ePos, yFail, opts) {
   }
   write.table(out, sprintf("%s_genes.txt", opts[["output-tag"]]),
               sep = "\t", quote = FALSE, row.names = FALSE, na = "NA")
+}
+
+writeMarkers <- function(mID, chrom, mPos, opts) {
+  out <- data.frame(MarkerRowID = seq_along(mID), MarkerID = mID,
+                    Chrom = chrom, Pos = mPos, stringsAsFactors = FALSE)
+  write.table(out, sprintf("%s_markers.txt", opts[["output-tag"]]),
+              sep = "\t", quote = FALSE, row.names = FALSE)
 }
 
 runPermutation <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
@@ -605,7 +632,23 @@ main <- function() {
   mChr <- as.numeric(geno$mChr)
   mPos <- geno$mPos
   mID  <- geno$mID
+  mChrName <- geno$mChrName
   if (!is.null(offset)) offset <- offset[samples]
+
+  if (opts[["min-expr-reads"]] > 0 && opts[["min-expr-samples"]] > 0) {
+    minS <- opts[["min-expr-samples"]]
+    if (minS < 1) minS <- ceiling(minS * nrow(Y))
+    lowE <- colSums(Y >= opts[["min-expr-reads"]]) < minS
+    if (any(lowE)) {
+      message(sprintf("Dropped %d genes with fewer than %d samples having at least %d reads",
+                      sum(lowE), minS, opts[["min-expr-reads"]]))
+      Y <- Y[, !lowE, drop = FALSE]; Y1 <- Y1[, !lowE, drop = FALSE]
+      Y2 <- Y2[, !lowE, drop = FALSE]
+      eChr <- eChr[!lowE]; ePos <- ePos[!lowE]; genes <- genes[!lowE]
+      eChrName <- eChrName[!lowE]
+    }
+    if (ncol(Y) == 0) die("no genes left after expression filtering")
+  }
 
   if (opts[["drop-low-variance"]]) {
     cv <- opts[["converge"]]
@@ -622,11 +665,17 @@ main <- function() {
       message(sprintf("Dropped %d variants with near-zero genotype variance", sum(lowZ)))
       Z <- Z[, !lowZ, drop = FALSE]
       mChr <- mChr[!lowZ]; mPos <- mPos[!lowZ]; mID <- mID[!lowZ]
+      mChrName <- mChrName[!lowZ]
     }
     if (ncol(Y) == 0) die("no genes left after variance filtering")
     if (ncol(Z) == 0) die("no variants left after variance filtering")
   }
   message(sprintf("Testing %d genes and %d variants", ncol(Y), ncol(Z)))
+
+  # write gene and marker indices up front so they are available even if
+  # model fitting stops early
+  writeGenes(Y1, Y2, genes, eChrName, ePos, NULL, opts)
+  writeMarkers(mID, mChrName, mPos, opts)
 
   yFail <- NULL
   if (!is.null(opts[["p-cut"]])) {
@@ -635,7 +684,7 @@ main <- function() {
   if (opts[["permute"]]) {
     runPermutation(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes, mID, opts)
   }
-  writeGenes(Y1, Y2, genes, eChrName, ePos, yFail, opts)
+  if (!is.null(yFail)) writeGenes(Y1, Y2, genes, eChrName, ePos, yFail, opts)
   message("Done")
 }
 
