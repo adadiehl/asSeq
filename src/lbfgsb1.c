@@ -5,6 +5,7 @@
  *
  */
 
+#include <string.h>
 #include "lbfgsb1.h"
 
 /*
@@ -4166,6 +4167,12 @@ void lbfgsb1(int n, int m, double *x, double *l, double *u, int *nbd,
     /* this needs to be zeroed for snd in mainlb to be zeroed */
     //wa = (double *) S_alloc(2*m*n+4*n+11*m*m+8*m, sizeof(double));
     //iwa = (int *) R_alloc(3*n, sizeof(int));
+    /* wa, iwa and g are reused across calls, so zero them here; otherwise
+     * each fit starts from the previous fit's workspace and results depend
+     * on which fits ran before it */
+    memset(wa, 0, (2*m*n+4*n+11*m*m+8*m) * sizeof(double));
+    memset(iwa, 0, 3*n * sizeof(int));
+    memset(g, 0, n * sizeof(double));
     strcpy(task, "START");
     while(1) {
 	/* Main workhorse setulb() from ../appl/lbfgsb.c : */
