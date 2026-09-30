@@ -40,6 +40,9 @@
 #include <string.h>
 #include <R_ext/RS.h> /* for F77_CALL */
 #include <R_ext/Linpack.h>
+/* R >= 4.5 no longer includes BLAS.h from Linpack.h; without it ddot is
+ * implicitly declared as returning int and its result is garbage */
+#include <R_ext/BLAS.h>
 #include <R_ext/PrtUtil.h> /* Rprintf */
 
 static void timer1(double * ttime)
