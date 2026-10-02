@@ -109,6 +109,19 @@ Permutation options (asSeq::trecaseP):
   across genes (qval_*) computed from (k + 1) / (n + 1), where k is the number
   of permutations with a better minimum p-value and n is nuse_*.
 
+Parallel options:
+  --threads=INT           Number of processes to run in parallel [default 1].
+                          Genes are split into chunks that are fitted in
+                          separate forked R processes (not available on
+                          Windows) and the results are merged, so the output
+                          files are the same as with --threads=1. With
+                          --permute, every chunk uses the same --seed (one is
+                          chosen and reported if not given). Trace output and
+                          warnings from each chunk are written to
+                          STR_chunk<k>.log, and STR_genes.txt gets Chunk and
+                          ChunkRowID columns giving the chunk of each gene and
+                          its index within it (i + 1 in trace messages).
+
 Input handling options:
   --unphased=STR          How to treat unphased heterozygous calls (0/1):
                           "error" or "drop" (drop the variant) [default error]
@@ -169,7 +182,8 @@ defaults <- list(
   "seed"              = NULL,
   "exclude-chroms"    = NULL,
   "min-expr-reads"    = 0,
-  "min-expr-samples"  = 0
+  "min-expr-samples"  = 0,
+  "threads"           = 1
 )
 
 # options that may be given without a value
@@ -249,7 +263,7 @@ parseArgs <- function(args) {
   for (k in c("min-as-reads", "min-as-sample", "min-n-het",
               "local-distance", "converge", "convergeglm", "scoretestp",
               "transtestp", "trace", "maxit", "np-max", "confidence-p",
-              "min-expr-reads", "min-expr-samples")) {
+              "min-expr-reads", "min-expr-samples", "threads")) {
     opts[[k]] <- parseNum(opts[[k]], k)
   }
   for (k in c("local-only", "drop-missing", "drop-low-variance")) {
@@ -265,6 +279,12 @@ parseArgs <- function(args) {
       die(sprintf("--exclude-chroms: unrecognized chromosome in '%s'", opts[["exclude-chroms"]]))
     }
     opts[["exclude-chroms"]] <- exInt
+  }
+  if (opts[["threads"]] < 1 || opts[["threads"]] != round(opts[["threads"]])) {
+    die("--threads must be a positive integer")
+  }
+  if (opts[["threads"]] > 1 && .Platform$OS.type == "windows") {
+    die("--threads > 1 is not supported on Windows")
   }
   opts[["np"]] <- parseNumList(opts[["np"]], "np")
   opts[["aim-p"]] <- parseNumList(opts[["aim-p"]], "aim-p")
@@ -447,10 +467,12 @@ readOffset <- function(file) {
 # analyses
 # ------------------------------------------------------------
 
-runNominal <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
-                       genes, mID, opts) {
-  res <- trecase(Y, Y1, Y2, X, Z,
-                 output.tag     = opts[["output-tag"]],
+# Fit the nominal scan for the given genes, writing TAG_eqtl.txt and
+# TAG_freq.txt; returns trecase's result list.
+fitNominal <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
+                       tag, opts) {
+  trecase(Y, Y1, Y2, X, Z,
+                 output.tag     = tag,
                  p.cut          = opts[["p-cut"]],
                  offset         = offset,
                  min.AS.reads   = opts[["min-as-reads"]],
@@ -465,6 +487,28 @@ runNominal <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
                  transTestP     = opts[["transtestp"]],
                  trace          = opts[["trace"]],
                  maxit          = opts[["maxit"]])
+}
+
+runNominal <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
+                       genes, mID, chunks, opts) {
+  tag <- opts[["output-tag"]]
+  if (length(chunks) == 1) {
+    res <- fitNominal(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, tag, opts)
+    if (res$succeed != 1) die("trecase did not complete successfully")
+    yFail <- res$yFailBaselineModel
+  } else {
+    res <- runChunks(chunks, opts, function(idx, k) {
+      fitNominal(Y[, idx, drop = FALSE], Y1[, idx, drop = FALSE],
+                 Y2[, idx, drop = FALSE], X, Z, offset, eChr[idx], ePos[idx],
+                 mChr, mPos, chunkTag(tag, k), opts)
+    })
+    yFail <- integer(ncol(Y))
+    for (k in seq_along(chunks)) {
+      if (res[[k]]$succeed != 1) die(sprintf("trecase did not complete successfully in chunk %d", k))
+      yFail[chunks[[k]]] <- res[[k]]$yFailBaselineModel
+    }
+    mergeNominal(chunks, tag)
+  }
 
   # annotate results with gene and marker IDs
   eqtlFile <- sprintf("%s_eqtl.txt", opts[["output-tag"]])
@@ -477,19 +521,99 @@ runNominal <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
                 sep = "\t", quote = FALSE, row.names = FALSE)
   }
 
-  if (res$succeed != 1) die("trecase did not complete successfully")
-  res$yFailBaselineModel
+  yFail
+}
+
+# ------------------------------------------------------------
+# parallel execution
+# ------------------------------------------------------------
+
+chunkTag <- function(tag, k) sprintf("%s_chunk%d", tag, k)
+
+# Deal genes round-robin into chunks so each gets a similar mix of genes.
+makeChunks <- function(nGenes, threads) {
+  n <- min(threads, nGenes)
+  lapply(seq_len(n), function(k) seq(k, nGenes, by = n))
+}
+
+# Run FUN(idx, k) for each chunk of gene indices in a forked process. Each
+# chunk's printed output, messages and warnings go to TAG_chunk<k>.log;
+# warnings are re-raised here with the chunk number.
+runChunks <- function(chunks, opts, FUN) {
+  tag <- opts[["output-tag"]]
+  message(sprintf("Running %d chunks in parallel; trace output in %s_chunk<k>.log",
+                  length(chunks), tag))
+  res <- parallel::mclapply(seq_along(chunks), function(k) {
+    con <- file(sprintf("%s.log", chunkTag(tag, k)), open = "wt")
+    sink(con); sink(con, type = "message")
+    on.exit({ sink(type = "message"); sink(); close(con) })
+    warns <- character(0)
+    out <- tryCatch(withCallingHandlers(FUN(chunks[[k]], k),
+             warning = function(w) {
+               warns <<- c(warns, conditionMessage(w))
+               message("Warning: ", conditionMessage(w))
+               invokeRestart("muffleWarning")
+             }),
+             error = function(e) structure(trimws(conditionMessage(e)), class = "chunkError"))
+    list(value = out, warnings = warns)
+  }, mc.cores = length(chunks), mc.preschedule = FALSE)
+
+  for (k in seq_along(res)) {
+    r <- res[[k]]
+    if (is.null(r) || inherits(r, "try-error")) {
+      die(sprintf("chunk %d did not finish (the process may have been killed); see %s.log",
+                  k, chunkTag(tag, k)))
+    }
+    if (inherits(r$value, "chunkError")) {
+      die(sprintf("chunk %d failed: %s; see %s.log", k, r$value, chunkTag(tag, k)))
+    }
+    for (w in r$warnings) warning(sprintf("[chunk %d] %s", k, w), call. = FALSE)
+  }
+  lapply(res, `[[`, "value")
+}
+
+# Combine per-chunk TAG_chunk<k>_eqtl.txt and _freq.txt files into the files
+# a single trecase run would have written, then remove the chunk files.
+mergeNominal <- function(chunks, tag) {
+  eqtl <- do.call(rbind, lapply(seq_along(chunks), function(k) {
+    e <- read.delim(sprintf("%s_eqtl.txt", chunkTag(tag, k)), check.names = FALSE,
+                    colClasses = "character")
+    e$GeneRowID <- as.character(chunks[[k]][as.integer(e$GeneRowID)])
+    e
+  }))
+  eqtl <- eqtl[order(as.integer(eqtl$GeneRowID), as.integer(eqtl$MarkerRowID)), ,
+               drop = FALSE]
+  write.table(eqtl, sprintf("%s_eqtl.txt", tag), sep = "\t", quote = FALSE,
+              row.names = FALSE)
+
+  freq <- lapply(seq_along(chunks), function(k) {
+    strsplit(readLines(sprintf("%s_freq.txt", chunkTag(tag, k))), "\t", fixed = TRUE)
+  })
+  out <- vapply(freq[[1]], paste, "", collapse = "\t")
+  for (r in seq_along(freq[[1]])[-1]) {
+    counts <- Reduce(`+`, lapply(freq, function(f) as.numeric(f[[r]][-1])))
+    out[r] <- paste(c(freq[[1]][[r]][1], sprintf("%.0f", counts)), collapse = "\t")
+  }
+  writeLines(out, sprintf("%s_freq.txt", tag))
+
+  for (k in seq_along(chunks)) {
+    file.remove(sprintf("%s_%s.txt", chunkTag(tag, k), c("eqtl", "freq")))
+  }
 }
 
 # Write the tested genes and the outcome of their baseline model fits.
 # yFail is trecase's yFailBaselineModel (1 = TReC failed, 2 = ASE not used,
 # 3 = both), or NULL if the nominal scan was not run.
-writeGenes <- function(Y1, Y2, genes, chrom, ePos, yFail, opts) {
+writeGenes <- function(Y1, Y2, genes, chrom, ePos, yFail, chunks, opts) {
   nAS <- colSums(Y1 + Y2 >= opts[["min-as-reads"]])
   out <- data.frame(GeneRowID = seq_along(genes), GeneID = genes,
                     Chrom = chrom, TSS = ePos, n_AS_samples = nAS,
                     TReC_baseline = NA, ASE_baseline = NA,
                     stringsAsFactors = FALSE)
+  if (length(chunks) > 1) {
+    out$Chunk <- rep(seq_along(chunks), lengths(chunks))[order(unlist(chunks))]
+    out$ChunkRowID <- unlist(lapply(chunks, seq_along))[order(unlist(chunks))]
+  }
   if (!is.null(yFail)) {
     trecFail <- yFail %% 2 == 1
     aseOff <- yFail >= 2
@@ -520,11 +644,11 @@ writeMarkers <- function(mID, chrom, mPos, opts) {
               sep = "\t", quote = FALSE, row.names = FALSE)
 }
 
-runPermutation <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
-                           genes, mID, opts) {
+fitPermutation <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
+                           opts) {
   if (!is.null(opts[["seed"]])) set.seed(opts[["seed"]])
 
-  perm <- trecaseP(Y, Y1, Y2, X, Z,
+  trecaseP(Y, Y1, Y2, X, Z,
                    offset         = offset,
                    min.AS.reads   = opts[["min-as-reads"]],
                    min.AS.sample  = opts[["min-as-sample"]],
@@ -542,6 +666,27 @@ runPermutation <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
                    confidence.p   = opts[["confidence-p"]],
                    trace          = opts[["trace"]],
                    maxit          = opts[["maxit"]])
+}
+
+runPermutation <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
+                           genes, mID, chunks, opts) {
+  if (length(chunks) == 1) {
+    perm <- fitPermutation(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, opts)
+  } else {
+    # every chunk must see the same sequence of permutations
+    if (is.null(opts[["seed"]])) {
+      opts[["seed"]] <- sample.int(.Machine$integer.max, 1)
+      message(sprintf("Using permutation seed %d for all chunks", opts[["seed"]]))
+    }
+    res <- runChunks(chunks, opts, function(idx, k) {
+      fitPermutation(Y[, idx, drop = FALSE], Y1[, idx, drop = FALSE],
+                     Y2[, idx, drop = FALSE], X, Z, offset, eChr[idx], ePos[idx],
+                     mChr, mPos, opts)
+    })
+    for (k in seq_along(chunks)) res[[k]]$geneID <- chunks[[k]][res[[k]]$geneID]
+    perm <- do.call(rbind, res)
+    perm <- perm[order(perm$geneID), , drop = FALSE]
+  }
 
   out <- data.frame(GeneID = genes[perm$geneID], stringsAsFactors = FALSE)
   for (type in c("trec", "ase", "trecase", "trec_trecase")) {
@@ -674,17 +819,20 @@ main <- function() {
 
   # write gene and marker indices up front so they are available even if
   # model fitting stops early
-  writeGenes(Y1, Y2, genes, eChrName, ePos, NULL, opts)
+  chunks <- makeChunks(ncol(Y), opts[["threads"]])
+  writeGenes(Y1, Y2, genes, eChrName, ePos, NULL, chunks, opts)
   writeMarkers(mID, mChrName, mPos, opts)
 
   yFail <- NULL
   if (!is.null(opts[["p-cut"]])) {
-    yFail <- runNominal(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes, mID, opts)
+    yFail <- runNominal(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes,
+                        mID, chunks, opts)
   }
   if (opts[["permute"]]) {
-    runPermutation(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes, mID, opts)
+    runPermutation(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos, genes, mID,
+                   chunks, opts)
   }
-  if (!is.null(yFail)) writeGenes(Y1, Y2, genes, eChrName, ePos, yFail, opts)
+  if (!is.null(yFail)) writeGenes(Y1, Y2, genes, eChrName, ePos, yFail, chunks, opts)
   message("Done")
 }
 
