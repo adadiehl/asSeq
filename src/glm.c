@@ -1706,6 +1706,182 @@ void b_TReC_ml(double* b_xj, int N, int fam, double b0, double phi,
  *
  **********************************************************************/
 
+/**********************************************************************
+ *
+ * trec_refine
+ *
+ * glmNBlog alternates between updating the genotype effect b and the
+ * other parameters, which can converge very slowly (e.g. when the
+ * genotype is correlated with covariates), so it may stop at its
+ * iteration limit short of the maximum. trec_refine starts from
+ * glmNBlog's last estimates and maximizes the TReC likelihood over all
+ * parameters jointly with BFGS (R's vmmin):
+ *
+ *   log(mu_i) = offset_i + x_i' beta + f_i(b),
+ *
+ * where f_i(b) = 0, log((1 + exp(b))/2) or b for genotype 0, 1 or 2,
+ * with negative binomial (log(theta) = -log(phi) estimated) or Poisson
+ * counts. The covariates are standardized internally, which does not
+ * change the fit.
+ *
+ **********************************************************************/
+
+typedef struct {
+  int N, p, nb;         /* samples, columns of Xs (incl. intercept), NB? */
+  double *y, *Xs, *off, *z, *mu;
+} trec_data;
+
+static void trec_mu(int n, double *par, trec_data *d)
+{
+  int i, j;
+  double eta, b = par[d->p];
+  for (i=0; i<d->N; i++) {
+    eta = d->off[i];
+    for (j=0; j<d->p; j++) eta += d->Xs[i + j*d->N]*par[j];
+    if (fabs(d->z[i] - 1.0) < 0.01) eta += log(0.5*(1.0 + exp(b)));
+    else if (fabs(d->z[i] - 2.0) < 0.01) eta += b;
+    d->mu[i] = exp(eta);
+  }
+}
+
+static double trec_negll(int n, double *par, void *ex)
+{
+  trec_data *d = (trec_data *) ex;
+  trec_mu(n, par, d);
+  if (d->nb) return -loglik_NB(d->N, exp(-par[d->p + 1]), d->mu, d->y);
+  return -loglik_Poisson(d->N, d->mu, d->y);
+}
+
+static void trec_negll_gr(int n, double *par, double *gr, void *ex)
+{
+  trec_data *d = (trec_data *) ex;
+  int i, j;
+  double si, th = 0.0, b = par[d->p], fb, yi, mui;
+  
+  trec_mu(n, par, d);
+  for (j=0; j<n; j++) gr[j] = 0.0;
+  if (d->nb) th = exp(par[d->p + 1]);
+  
+  for (i=0; i<d->N; i++) {
+    yi  = d->y[i];
+    mui = d->mu[i];
+    /* d loglik / d eta_i */
+    si  = d->nb ? th*(yi - mui)/(th + mui) : yi - mui;
+    for (j=0; j<d->p; j++) gr[j] -= si*d->Xs[i + j*d->N];
+    if (fabs(d->z[i] - 1.0) < 0.01) fb = exp(b)/(1.0 + exp(b));
+    else if (fabs(d->z[i] - 2.0) < 0.01) fb = 1.0;
+    else fb = 0.0;
+    gr[d->p] -= si*fb;
+    if (d->nb) {
+      gr[d->p + 1] -= th*(digamma(yi + th) - digamma(th) + log(th) + 1.0 
+                          - log(th + mui) - (th + yi)/(th + mui));
+    }
+  }
+}
+
+/* Returns 1 and updates b, phi, twoLL and fitted if BFGS converges to a
+ * likelihood at least as high as twoLL; returns 0 otherwise. */
+static int trec_refine(int N, int nX, double *y, double *X, double *z, 
+                       double *offset, int family, double *b, double *phi, 
+                       double *twoLL, double *fitted, int trace)
+{
+  int i, j, k, p = nX + 1, n, ok = 1, fail = 0, fncount, grcount, *mask;
+  double *Xs, *par, *A, *r, m, sd, f, Fmin, twoLL1;
+  trec_data d;
+  
+  if (family != NB && family != POISSON) return 0;
+  
+  n    = p + 1 + (family == NB);
+  Xs   = (double *) R_Calloc(N*p, double);
+  par  = (double *) R_Calloc(n, double);
+  A    = (double *) R_Calloc(p*p, double);
+  r    = (double *) R_Calloc(N, double);
+  mask = (int *) R_Calloc(n, int);
+  
+  /* standardized design: intercept and centered, scaled covariates */
+  for (i=0; i<N; i++) Xs[i] = 1.0;
+  for (j=0; j<nX; j++) {
+    m = 0.0; sd = 0.0;
+    for (i=0; i<N; i++) m += X[i + j*N];
+    m /= N;
+    for (i=0; i<N; i++) sd += (X[i + j*N] - m)*(X[i + j*N] - m);
+    sd = sqrt(sd/(N - 1.0));
+    if (!(sd > 0.0)) { ok = 0; break; }
+    for (i=0; i<N; i++) Xs[i + (j+1)*N] = (X[i + j*N] - m)/sd;
+  }
+  
+  /* starting beta: least squares fit of the linear predictor implied by
+   * glmNBlog's fitted values (exact, since they are fitted by the model) */
+  if (ok) {
+    for (i=0; i<N; i++) {
+      f = 0.0;
+      if (fabs(z[i] - 1.0) < 0.01) f = log(0.5*(1.0 + exp(*b)));
+      else if (fabs(z[i] - 2.0) < 0.01) f = *b;
+      if (!(fitted[i] > 0.0)) { ok = 0; break; }
+      r[i] = log(fitted[i]) - offset[i] - f;
+    }
+  }
+  if (ok) {
+    /* normal equations A par = Xs'r, solved by Cholesky decomposition */
+    for (j=0; j<p; j++) {
+      par[j] = 0.0;
+      for (i=0; i<N; i++) par[j] += Xs[i + j*N]*r[i];
+      for (k=0; k<p; k++) {
+        A[j + k*p] = 0.0;
+        for (i=0; i<N; i++) A[j + k*p] += Xs[i + j*N]*Xs[i + k*N];
+      }
+    }
+    for (j=0; j<p && ok; j++) {
+      for (k=0; k<j; k++) A[j + j*p] -= A[j + k*p]*A[j + k*p];
+      if (!(A[j + j*p] > 0.0)) { ok = 0; break; }
+      A[j + j*p] = sqrt(A[j + j*p]);
+      for (i=j+1; i<p; i++) {
+        for (k=0; k<j; k++) A[i + j*p] -= A[i + k*p]*A[j + k*p];
+        A[i + j*p] /= A[j + j*p];
+      }
+    }
+  }
+  if (ok) {
+    for (j=0; j<p; j++) {
+      for (k=0; k<j; k++) par[j] -= A[j + k*p]*par[k];
+      par[j] /= A[j + j*p];
+    }
+    for (j=p-1; j>=0; j--) {
+      for (k=j+1; k<p; k++) par[j] -= A[k + j*p]*par[k];
+      par[j] /= A[j + j*p];
+    }
+    par[p] = *b;
+    if (family == NB) par[p + 1] = -log(*phi);
+    for (j=0; j<n; j++) mask[j] = 1;
+    
+    d.N = N; d.p = p; d.nb = (family == NB);
+    d.y = y; d.Xs = Xs; d.off = offset; d.z = z; d.mu = r;
+    
+    if (!R_FINITE(trec_negll(n, par, &d))) ok = 0;
+  }
+  if (ok) {
+    vmmin(n, par, &Fmin, trec_negll, trec_negll_gr, 1000, 0, mask, 
+          R_NegInf, 1e-12, 10, &d, &fncount, &grcount, &fail);
+    twoLL1 = -2.0*Fmin;
+    ok = (fail == 0 && R_FINITE(twoLL1) && twoLL1 >= *twoLL - 1e-8*fabs(*twoLL));
+    
+    if (trace > 1) {
+      Rprintf("  trec_refine: fail=%d, twoLL=(%.6e, %.6e), b=(%.4e, %.4e)%s\n", 
+              fail, *twoLL, twoLL1, *b, par[p], ok ? "" : ", not used");
+    }
+  }
+  if (ok) {
+    trec_negll(n, par, &d);
+    for (i=0; i<N; i++) fitted[i] = d.mu[i];
+    *b     = par[p];
+    *phi   = (family == NB) ? exp(-par[p + 1]) : 0.0;
+    *twoLL = twoLL1;
+  }
+  
+  R_Free(Xs); R_Free(par); R_Free(A); R_Free(r); R_Free(mask);
+  return ok;
+}
+
 int glmNBlog(int *dimsNew, int *nIter, double *pY, double *z, 
              int *linkR, double *offset, double *pX, double *conv, 
              double *convGLM, int *rank, double *Xb, double *fitted, 
@@ -1923,6 +2099,13 @@ int glmNBlog(int *dimsNew, int *nIter, double *pY, double *z,
       Rprintf("\n  g=%d, paraDiff=%.3e, reach max iteration in glmNBlog", g, paraDiff);
     }
     succeed = 0;
+    
+    /* the alternating updates converge slowly: maximize jointly instead */
+    if (trec_refine(N, nX, pY, pX, pZ, offset, *family, &bxj_old, phi, 
+                    &twoLL_trec1, fitted2, *trace)) {
+      if (*trace) Rprintf("; refined by BFGS");
+      succeed = 1;
+    }
   }
   
   if (succeed) {
