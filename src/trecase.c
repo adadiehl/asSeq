@@ -364,6 +364,13 @@ void b_ml(double* b_xj, int N, int h, double b0, double phi,
     grad_b(b1, N, h, b0, phi, theta, y, x, mu, nA, nTotal, zeta, gr, trace);
     
     del = gr[0]/gr[1];
+    
+    /* a zero or non-finite derivative gives a non-finite step, and the
+     * next update would turn the estimate into NaN */
+    if (!R_FINITE(del)) {
+      fail = 1;
+      break;
+    }
     b1 -= del;
     it += 1;
     
@@ -415,6 +422,8 @@ void b_ml(double* b_xj, int N, int h, double b0, double phi,
     if(trace > 1)
       Rprintf("  b_ml: 2st derivative = %.2e\n", gr[1]);
   }
+  
+  if (!R_FINITE(b1) || !R_FINITE(gr[0]) || !R_FINITE(gr[1])) fail = 1;
   
   *b_xj  = b1;
   *failR = fail;

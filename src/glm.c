@@ -1442,7 +1442,11 @@ int glmNB(int *dims, int *nIter, double *y, double *z,
       }else {
         cvPhi = phi_ml(y, fitted, N, maxit, conv, phi, 0, *trace);
         
-        if(cvPhi==0){
+        /* cvPhi = 1: no overdispersion, and phi is at its lower bound
+         * (1e-5). The family cannot be switched to Poisson here, since
+         * callers keep it fixed across markers, so keep the negative
+         * binomial model at the boundary, which is numerically Poisson. */
+        if(cvPhi==0 || cvPhi==1){
           if(*trace > 3) 
             Rprintf("\n  glmNB: initial value for phi: %e\n", *phi);
         }else {
@@ -1488,7 +1492,8 @@ int glmNB(int *dims, int *nIter, double *y, double *z,
     phi0  = *phi;
     cvPhi = phi_ml(y, fitted, N, maxit, conv, phi, 1, *trace);
     
-    if(cvPhi==0){
+    /* cvPhi = 1: phi at its lower bound (no overdispersion), see above */
+    if(cvPhi==0 || cvPhi==1){
       if(*trace > 3) 
         Rprintf("\n  finish phi_ml, cvPhi=%d, phi=%e\n", cvPhi, *phi);
     }else {
@@ -1513,7 +1518,16 @@ int glmNB(int *dims, int *nIter, double *y, double *z,
   }
 
   if(iter == maxit) {
-    if (*trace) {
+    /* The absolute tolerance conv can be below the numerical precision of
+     * the alternating updates, which then cycle at the optimum. Accept
+     * the fit if the last update changed the log-likelihood and phi by
+     * no more than 1e-6 in relative terms. */
+    if (fabs(Lm0 - Lm) <= 1e-6*(fabs(Lm) + 1.0) && fabs(del) <= 1e-6*(*phi)) {
+      succeed = 1;
+      if (*trace > 1) {
+        Rprintf("\n  glmNB: alternation limit reached at the optimum (relative change < 1e-6)\n");
+      }
+    }else if (*trace) {
       Rprintf("\n  glmNB: Alternation limit reached: iter=%d\n", iter);
     }
   }else if (convged) {
@@ -1642,6 +1656,13 @@ void b_TReC_ml(double* b_xj, int N, int fam, double b0, double phi,
     grad_b_TReC(b1, N, fam, b0, phi, y, x, mu, gr);
     
     del = gr[0]/gr[1];
+    
+    /* a zero or non-finite derivative gives a non-finite step, and the
+     * next update would turn the estimate into NaN */
+    if (!R_FINITE(del)) {
+      fail = 1;
+      break;
+    }
     b1 -= del;
     it += 1;
     
@@ -1693,6 +1714,8 @@ void b_TReC_ml(double* b_xj, int N, int fam, double b0, double phi,
       Rprintf("  b_TReC_ml: 2st derivative = %.2e\n", gr[1]);
   }
     
+  if (!R_FINITE(b1) || !R_FINITE(gr[0]) || !R_FINITE(gr[1])) fail = 1;
+  
   *b_xj  = b1;
   *failR = fail;
 }
