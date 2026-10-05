@@ -317,11 +317,13 @@ void grad_b(double b1, int N, int h, double b0, double phi,
    * add up the 1st/2nd derivatives from the TReC and ASE models
    * ---------------------------------------------------------*/
   
+  /* d2h/db2 = h''(pi) (dpi/db)^2 + h'(pi) d2pi/db2, with
+   * dpi/db = pi(1 - pi) and d2pi/db2 = pi(1 - pi)(1 - 2pi) */
   dpi_db = pi/(1.0 + exp(b1));
   
   tmp    = dpi_db/(1.0 + exp(b1)) - pi*dpi_db;
   grad1 += dh_dpi1*dpi_db;
-  grad2 += dh_dpi1*tmp + dh_dpi2*dpi_db;
+  grad2 += dh_dpi1*tmp + dh_dpi2*dpi_db*dpi_db;
   
   if (trace > 9) {
     Rprintf("grad1=%e, grad2=%e\n", grad1, grad2);
