@@ -10,10 +10,56 @@
 #include <time.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>
 #include <R.h>
 #include "utility.h"
 #include "glm.h"
 #include "ase.h"
+
+/**********************************************************************
+ *
+ * theta_converged
+ *
+ * In the joint model, theta is re-estimated from its value in the
+ * previous iteration, which is often already the optimum. L-BFGS-B
+ * (with pgtol = 0) then cannot find a step that lowers the objective
+ * and reports an abnormal line search (fail = 52). Accept theta as
+ * converged if a Newton step from it would lower the objective by no
+ * more than L-BFGS-B's own relative tolerance, factr * DBL_EPSILON.
+ * The curvature is estimated by differencing the analytic gradient.
+ *
+ **********************************************************************/
+
+static int theta_converged(double theta, double fmin, double lower, 
+                           double factr, void *ex, SEXP x1)
+{
+  double para[2], g0, g1, g2, h, H, decrease, tol;
+  
+  para[1] = 0.5; /* not used by negGradLogH0 */
+  para[0] = theta;
+  negGradLogH0(1, para, &g0, ex, x1);
+  
+  h = 1e-4*theta;
+  if (h < 1e-10) h = 1e-10;
+  
+  para[0] = theta + h;
+  negGradLogH0(1, para, &g1, ex, x1);
+  
+  if (theta - h > lower) {
+    para[0] = theta - h;
+    negGradLogH0(1, para, &g2, ex, x1);
+    H = (g1 - g2)/(2.0*h);
+  }else {
+    H = (g1 - g0)/h;
+  }
+  
+  if (!(H > 0.0)) return 0;
+  
+  decrease = g0*g0/(2.0*H);
+  tol      = factr*DBL_EPSILON*(fabs(fmin) > 1.0 ? fabs(fmin) : 1.0);
+  
+  return (decrease <= tol);
+}
 
 #define LMM   5
 #define NPARA 2
@@ -1002,6 +1048,11 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
              &fncount, &grcount, maxit, msg, 0, nREPORT, wa, iwa, g1,x1);
 
           twoLL_ase_joint1 = -2.0*Fmin;
+          
+          if (fail == 52 && theta_converged(initPara[0], Fmin, lower[0], factr, 
+                                            (void*)exPara, x1)) {
+            fail = 0;
+          }
                     
           if (fail) {
             if(*trace){
@@ -2024,6 +2075,11 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
                  &fncount, &grcount, maxit, msg, 0, nREPORT, wa, iwa, g1,x1);          
 
           twoLL_ase_joint1 = -2.0*Fmin;
+          
+          if (fail == 52 && theta_converged(initPara[0], Fmin, lower[0], factr, 
+                                            (void*)exPara, x1)) {
+            fail = 0;
+          }
           
           if (fail) {
             if(*trace){
