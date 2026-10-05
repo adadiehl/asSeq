@@ -18,45 +18,80 @@
 
 /**********************************************************************
  *
- * theta_converged
+ * lbfgsb_converged
  *
- * In the joint model, theta is re-estimated from its value in the
- * previous iteration, which is often already the optimum. L-BFGS-B
- * (with pgtol = 0) then cannot find a step that lowers the objective
- * and reports an abnormal line search (fail = 52). Accept theta as
- * converged if a Newton step from it would lower the objective by no
- * more than L-BFGS-B's own relative tolerance, factr * DBL_EPSILON.
- * The curvature is estimated by differencing the analytic gradient.
+ * L-BFGS-B (called with pgtol = 0) reports an abnormal line search
+ * (fail = 52) when it starts at, or reaches, the optimum, because no
+ * step can lower the objective any further. This happens routinely for
+ * the ASE fits: the joint model re-estimates theta from its previous
+ * value, the per-pair ASE model starts from the H0 estimate, and the
+ * baseline fit stalls once it has converged.
+ *
+ * Decide whether the point x returned with fail = 52 is in fact a
+ * minimum of the 1- or 2-parameter objective. A parameter on a bound
+ * whose gradient points out of the feasible region is at a constrained
+ * optimum and is held fixed. For the remaining parameters, estimate the
+ * Hessian by differencing the analytic gradient, and accept x if the
+ * Hessian is positive definite and a Newton step would lower the
+ * objective by no more than L-BFGS-B's own relative tolerance,
+ * factr * DBL_EPSILON.
  *
  **********************************************************************/
 
-static int theta_converged(double theta, double fmin, double lower, 
-                           double factr, void *ex, SEXP x1)
+static int lbfgsb_converged(int n, double *x, double fmin, double *lower, 
+                            double *upper, double factr, optimgr1 *grad, 
+                            void *ex, SEXP x1)
 {
-  double para[2], g0, g1, g2, h, H, decrease, tol;
+  double para[2], g0[2], gp[2], gm[2], H[2][2], h, step, gF[2], tol, decrease;
+  int a, b, nF, idx[2];
   
-  para[1] = 0.5; /* not used by negGradLogH0 */
-  para[0] = theta;
-  negGradLogH0(1, para, &g0, ex, x1);
+  para[0] = x[0];
+  para[1] = (n == 2) ? x[1] : 0.5; /* para[1] is not used when n = 1 */
+  grad(n, para, g0, ex, x1);
   
-  h = 1e-4*theta;
-  if (h < 1e-10) h = 1e-10;
+  /* free parameters: not held at a bound by the gradient */
+  nF = 0;
+  for (a = 0; a < n; a++) {
+    if ((x[a] <= lower[a] && g0[a] >= 0.0) || (x[a] >= upper[a] && g0[a] <= 0.0)) continue;
+    idx[nF++] = a;
+  }
+  if (nF == 0) return 1;
   
-  para[0] = theta + h;
-  negGradLogH0(1, para, &g1, ex, x1);
-  
-  if (theta - h > lower) {
-    para[0] = theta - h;
-    negGradLogH0(1, para, &g2, ex, x1);
-    H = (g1 - g2)/(2.0*h);
-  }else {
-    H = (g1 - g0)/h;
+  /* Hessian rows for the free parameters, by differencing the gradient */
+  for (a = 0; a < nF; a++) {
+    int k = idx[a];
+    double xk = x[k], lo, hi;
+    
+    h = 1e-4*fabs(xk);
+    if (h < 1e-10) h = 1e-10;
+    
+    lo = (xk - h > lower[k]) ? xk - h : xk;
+    hi = (xk + h < upper[k]) ? xk + h : xk;
+    if (hi == lo) return 0;
+    
+    para[k] = hi; grad(n, para, gp, ex, x1);
+    para[k] = lo; grad(n, para, gm, ex, x1);
+    para[k] = xk;
+    if (lo == xk) for (b = 0; b < n; b++) gm[b] = g0[b];
+    if (hi == xk) for (b = 0; b < n; b++) gp[b] = g0[b];
+    
+    for (b = 0; b < nF; b++) H[b][a] = (gp[idx[b]] - gm[idx[b]])/(hi - lo);
   }
   
-  if (!(H > 0.0)) return 0;
+  for (a = 0; a < nF; a++) gF[a] = g0[idx[a]];
   
-  decrease = g0*g0/(2.0*H);
-  tol      = factr*DBL_EPSILON*(fabs(fmin) > 1.0 ? fabs(fmin) : 1.0);
+  if (nF == 1) {
+    if (!(H[0][0] > 0.0)) return 0;
+    decrease = gF[0]*gF[0]/(2.0*H[0][0]);
+  }else {
+    double h01 = 0.5*(H[0][1] + H[1][0]), det = H[0][0]*H[1][1] - h01*h01;
+    if (!(H[0][0] > 0.0 && det > 0.0)) return 0;
+    /* decrease = 0.5 * g' H^{-1} g */
+    step     = (H[1][1]*gF[0]*gF[0] - 2.0*h01*gF[0]*gF[1] + H[0][0]*gF[1]*gF[1])/det;
+    decrease = 0.5*step;
+  }
+  
+  tol = factr*DBL_EPSILON*(fabs(fmin) > 1.0 ? fabs(fmin) : 1.0);
   
   return (decrease <= tol);
 }
@@ -699,6 +734,11 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
              &fncount, &grcount, maxit, msg, 0, nREPORT, wa, iwa, g1,x1);
 	  
       
+      if (fail == 52 && lbfgsb_converged(1, initPara, Fmin, lower, upper, factr, 
+                                         negGradLogH0, (void*)exPara, x1)) {
+        fail = 0;
+      }
+      
       if (fail) {
         if (*trace)
           Rprintf("  i=%d, fail to fit baseline ASE model\n", i);
@@ -878,6 +918,11 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
              negLogH1, negGradLogH1, &fail, (void*)exPara, factr, pgtol,  
              &fncount, &grcount, maxit1, msg, 0, nREPORT, wa, iwa, g1,x1);
           
+          if (fail == 52 && lbfgsb_converged(2, initPara, Fmin, lower, upper, factr, 
+                                             negGradLogH1, (void*)exPara, x1)) {
+            fail = 0;
+          }
+          
           if (fail){
             useASE_j=0;
             
@@ -1049,8 +1094,8 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
 
           twoLL_ase_joint1 = -2.0*Fmin;
           
-          if (fail == 52 && theta_converged(initPara[0], Fmin, lower[0], factr, 
-                                            (void*)exPara, x1)) {
+          if (fail == 52 && lbfgsb_converged(1, initPara, Fmin, lower, upper, factr, 
+                                             negGradLogH0, (void*)exPara, x1)) {
             fail = 0;
           }
                     
@@ -1731,6 +1776,11 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
       lbfgsb1(npara, lmm, initPara, lower, upper, nbd, &Fmin, 
              negLogH0, negGradLogH0, &fail, (void*)exPara, factr, pgtol,  
              &fncount, &grcount, maxit, msg, 0, nREPORT, wa, iwa, g1,x1);      
+      if (fail == 52 && lbfgsb_converged(1, initPara, Fmin, lower, upper, factr, 
+                                         negGradLogH0, (void*)exPara, x1)) {
+        fail = 0;
+      }
+      
       if (fail) {
         if (*trace)
           Rprintf("  i=%d, fail to fit baseline ASE model\n", i);
@@ -1902,6 +1952,11 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
           lbfgsb1(npara, lmm, initPara, lower, upper, nbd, &Fmin, 
                  negLogH1, negGradLogH1, &fail, (void*)exPara, factr, pgtol,  
                  &fncount, &grcount, maxit1, msg, 0, nREPORT, wa, iwa, g1,x1);
+          
+          if (fail == 52 && lbfgsb_converged(2, initPara, Fmin, lower, upper, factr, 
+                                             negGradLogH1, (void*)exPara, x1)) {
+            fail = 0;
+          }
           
           if (fail){
             useASE_j=0;
@@ -2076,8 +2131,8 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
 
           twoLL_ase_joint1 = -2.0*Fmin;
           
-          if (fail == 52 && theta_converged(initPara[0], Fmin, lower[0], factr, 
-                                            (void*)exPara, x1)) {
+          if (fail == 52 && lbfgsb_converged(1, initPara, Fmin, lower, upper, factr, 
+                                             negGradLogH0, (void*)exPara, x1)) {
             fail = 0;
           }
           
