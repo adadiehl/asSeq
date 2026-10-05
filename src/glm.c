@@ -386,6 +386,206 @@ void initialize(int family, double* y, double* mu, int N, double* nTotal_binom)
  
  **********************************************************************/
 
+/**********************************************************************
+ *
+ * glmFit_damped
+ *
+ * Fallback for glmFit when its IRLS iterations do not converge. Plain
+ * IRLS takes full steps and never checks the likelihood, and for some
+ * data (e.g. highly overdispersed counts) it ends up cycling between two
+ * points, or diverges until all weights are zero. Restart from the
+ * default initial values and halve each step until the log-likelihood
+ * does not decrease, stopping when the relative change in deviance is
+ * below conv (as in R's glm2). For the negative binomial model the steps
+ * use the observed rather than the expected information (Newton-Raphson
+ * instead of Fisher scoring), because with the non-canonical log link
+ * Fisher scoring can converge very slowly. Only Poisson and negative
+ * binomial models with a log link are handled.
+ *
+ * On convergence, fitted holds the fitted values, and weights, resid,
+ * beta, the rank and the weighted sum of squares are computed at them
+ * as in glmFit.
+ *
+ **********************************************************************/
+
+static double negll_count(int family, int N, double phi, double *mu, double *y)
+{
+  if (family == POISSON) return -loglik_Poisson(N, mu, y);
+  return -loglik_NB(N, phi, mu, y);
+}
+
+/* One weighted least squares step of IRLS at the current fitted values:
+ * sets weights, resid, the working response z, and etaW, the new linear
+ * predictor without the offset. With newton = 1 and a negative binomial
+ * model, the weights are the observed information mu(1 + phi y)/(1 + phi mu)^2
+ * (a Newton-Raphson step); otherwise they are those used by glmFit.
+ * Returns the rank of X, or -1 if all weights are zero. */
+static int irls_step(int family, int link, int N, int M, int useOffset,
+                     double *y, double *offset, double *z, double *X, 
+                     double *Xb, double *fitted, double *resid, 
+                     double *weights, double phi, double *beta, 
+                     double *etaW, int *Nu, double *wss, int newton)
+{
+  double epsilon = 1e-8, mu, Vmu, D, ri, wi, ssx, ssr, *xi, *xbi, *xbj;
+  int i, j, x_rank;
+  
+  *Nu  = 0;
+  *wss = 0.0;
+  for (i=0; i<N; i++) {
+    mu = fitted[i];
+    if (!muvalid(family, mu)) {
+      wi = ri = 0.0;
+    }else if (newton && family == NB && link == LOG) {
+      (*Nu)++;
+      wi = mu*(1.0 + phi*y[i])/((1.0 + phi*mu)*(1.0 + phi*mu));
+      ri = (y[i] - mu)*(1.0 + phi*mu)/(mu*(1.0 + phi*y[i]));
+    }else {
+      (*Nu)++;
+      Vmu = varfun(family, mu, phi);
+      if (link == family) {
+        ri = (y[i] - mu)/Vmu;
+        wi = Vmu;
+      }else {
+        D  = dlink(link, mu);
+        ri = D*(y[i] - mu);
+        wi = 1.0/(D*D*Vmu);
+      }
+    }
+    *wss += wi*ri*ri;
+    weights[i] = wi;
+    if (weights[i] < epsilon) weights[i] = 0.;
+    z[i] = linkfun(link, mu) + ri;
+    if (useOffset) z[i] -= offset[i];
+  }
+  
+  if (wcenter(z, N, weights, 1, resid) == 1) return -1;
+  
+  xi  = X;
+  xbi = Xb;
+  x_rank = 0;
+  for (i=0; i<M; i++, xi+=N) {
+    wcenter(xi, N, weights, 1, xbi);
+    ssx = wssq(xbi, N, weights);
+    xbj = Xb;
+    for (j=0; j<x_rank; j++, xbj+=N) wresid(xbi, N, weights, xbj, xbi, beta);
+    ssr = wssq(xbi, N, weights);
+    if (ssr/ssx > epsilon) {
+      wresid(resid, N, weights, xbi, resid, beta);
+      x_rank++;
+      xbi+=N;
+    }
+  }
+  
+  for (i=0; i<N; i++) etaW[i] = z[i] - resid[i];
+  
+  return x_rank;
+}
+
+static int glmFit_damped(int family, int link, int N, int M, int maxit, 
+                         int useOffset, double *y, double *offset, double *z, 
+                         double *X, double *nTotal_binom, double conv, 
+                         double *Xb, double *fitted, double *resid, 
+                         double *weights, double phi, int trace, double *beta, 
+                         int *Nu, int *x_rank, double *wss, int *nIter)
+{
+  int i, h, iter, convg = 0, accepted;
+  double dev, dev_c, s, off;
+  double *eta, *etaW, *mu_c;
+  
+  if (!((family == POISSON || family == NB) && link == LOG)) return 0;
+  
+  eta  = (double *) R_Calloc(N, double);
+  etaW = (double *) R_Calloc(N, double);
+  mu_c = (double *) R_Calloc(N, double);
+  
+  /* The default initial values are close to y, i.e. the saturated model,
+   * which no fit can match. Take one full IRLS step from them to get a
+   * fit of the model, then require each later step not to decrease the
+   * log-likelihood. */
+  initialize(family, y, fitted, N, nTotal_binom);
+  *x_rank = irls_step(family, link, N, M, useOffset, y, offset, z, X, Xb, 
+                      fitted, resid, weights, phi, beta, eta, Nu, wss, 1);
+  if (*x_rank < M) {
+    R_Free(eta);
+    R_Free(etaW);
+    R_Free(mu_c);
+    return 0;
+  }
+  for (i=0; i<N; i++) {
+    fitted[i] = invlink(link, eta[i] + (useOffset ? offset[i] : 0.0));
+  }
+  dev = negll_count(family, N, phi, fitted, y);
+  
+  for (iter=0; iter<maxit; iter++) {
+    *x_rank = irls_step(family, link, N, M, useOffset, y, offset, z, X, Xb, 
+                        fitted, resid, weights, phi, beta, etaW, Nu, wss, 1);
+    if (*x_rank < M) break;
+    
+    /* halve the step until the log-likelihood does not decrease */
+    accepted = 0;
+    s = 1.0;
+    for (h=0; h<30; h++) {
+      for (i=0; i<N; i++) {
+        off = useOffset ? offset[i] : 0.0;
+        mu_c[i] = invlink(link, eta[i] + s*(etaW[i] - eta[i]) + off);
+      }
+      dev_c = negll_count(family, N, phi, mu_c, y);
+      if (R_FINITE(dev_c) && (!R_FINITE(dev) || dev_c <= dev + 1e-12*fabs(dev))) {
+        accepted = 1;
+        break;
+      }
+      s *= 0.5;
+    }
+    
+    /* no step improves the fit: already at the optimum */
+    if (!accepted) {
+      convg = 1;
+      break;
+    }
+    
+    for (i=0; i<N; i++) {
+      eta[i]   += s*(etaW[i] - eta[i]);
+      fitted[i] = mu_c[i];
+    }
+    
+    if (trace > 5) {
+      Rprintf("    glmFit_damped: iteration %d, step=%.3e, deviance=%.6e\n", 
+              iter, s, 2.0*dev_c);
+    }
+    
+    if (fabs(dev - dev_c)/(fabs(dev_c) + 0.1) < conv) {
+      convg = 1;
+      break;
+    }
+    dev = dev_c;
+  }
+  
+  if (convg) {
+    /* weights, residuals, beta and rank at the final fitted values */
+    *x_rank = irls_step(family, link, N, M, useOffset, y, offset, z, X, Xb, 
+                        fitted, resid, weights, phi, beta, etaW, Nu, wss, 0);
+    if (*x_rank < M) convg = 0;
+    
+    /* glmFit returns working residuals in resid */
+    for (i=0; i<N; i++) {
+      if (weights[i] > 0.0) {
+        resid[i] = (y[i] - fitted[i])*dlink(link, fitted[i]);
+        if (link == family) resid[i] = (y[i] - fitted[i])/varfun(family, fitted[i], phi);
+      }else {
+        resid[i] = 0.0;
+      }
+    }
+  }
+  
+  *nIter = iter;
+  
+  R_Free(eta);
+  R_Free(etaW);
+  R_Free(mu_c);
+  
+  return convg;
+}
+
 int glmFit(int* familyR, int* linkR, int* dims, int* nIter,
            double *y, double *offset, double *z,
            double *X, double *nTotal_binom, double *convR, 
@@ -696,6 +896,22 @@ int glmFit(int* familyR, int* linkR, int* dims, int* nIter,
         wss_last = wss;
         iter ++;
       }
+      
+      /* IRLS did not converge: retry with step-halving. This includes
+       * the cases where diverging iterations zeroed all weights or made
+       * X appear rank deficient; glmFit_damped recomputes the weights
+       * and checks the rank itself. */
+      if (!convg) {
+        if (*trace > 1)
+          Rprintf("  glmFit: IRLS did not converge, retrying with step-halving\n");
+        
+        convg = glmFit_damped(family, link, N, M, maxit, useOffset, y, offset, 
+                              z, X, nTotal_binom, conv, Xb, fitted, resid, 
+                              weights, *phi, *trace, beta, &Nu, &x_rank, 
+                              &wss_last, &iter);
+        if (*trace > 1)
+          Rprintf("  glmFit: step-halving IRLS %s\n", convg ? "converged" : "did not converge");
+      }
     }
     
     if (convg) {
@@ -931,6 +1147,43 @@ void score_info(int N, double theta, double* mu, double* y,
  *
  **********************************************************************/
 
+/**********************************************************************
+ *
+ * theta_search
+ *
+ * Maximize the negative binomial log-likelihood over theta = 1/phi in
+ * [minTheta, maxTheta] by golden-section search on log(theta). Used by
+ * phi_ml when its Newton iterations overshoot the bounds or do not
+ * converge.
+ *
+ **********************************************************************/
+
+static double theta_search(double* y, double* mu, int N, double minTheta, 
+                           double maxTheta)
+{
+  const double gr = 0.5*(sqrt(5.0) - 1.0);
+  double a = log(minTheta), b = log(maxTheta), c, d, fc, fd;
+  
+  c  = b - gr*(b - a);
+  d  = a + gr*(b - a);
+  fc = loglik_NB(N, exp(-c), mu, y);
+  fd = loglik_NB(N, exp(-d), mu, y);
+  
+  while (b - a > 1e-10) {
+    if (fc > fd) {
+      b = d; d = c; fd = fc;
+      c  = b - gr*(b - a);
+      fc = loglik_NB(N, exp(-c), mu, y);
+    }else {
+      a = c; c = d; fc = fd;
+      d  = a + gr*(b - a);
+      fd = loglik_NB(N, exp(-d), mu, y);
+    }
+  }
+  
+  return exp(0.5*(a + b));
+}
+
 int phi_ml(double* y, double* mu, int N, int limit, double eps, 
            double* phi, int initPhi, int trace)
 {
@@ -993,6 +1246,19 @@ int phi_ml(double* y, double* mu, int N, int limit, double eps,
     fail = 1;
     if(trace > 3)
       Rprintf("  phi.ml: iteration limit reached in phi_ml\n");
+  }
+  
+  /* Newton's method can overshoot the lower bound or fail to converge
+   * even when the maximum is well inside the bounds: search directly */
+  if (tryZINB || fail) {
+    theta0 = theta_search(y, mu, N, minTheta, maxTheta);
+    
+    fail       = 0;
+    tryZINB    = (theta0 <= minTheta*(1.0 + 1e-6));
+    tryPoisson = (theta0 >= maxTheta*(1.0 - 1e-6));
+    
+    if(trace > 3)
+      Rprintf("  phi.ml: Newton failed; direct search gives phi=%.3e\n", 1/theta0);
   }
   
   *phi = 1/theta0;
