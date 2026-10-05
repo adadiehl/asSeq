@@ -497,7 +497,7 @@ runNominal <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
     if (res$succeed != 1) die("trecase did not complete successfully")
     yFail <- res$yFailBaselineModel
   } else {
-    res <- runChunks(chunks, opts, function(idx, k) {
+    res <- runChunks(chunks, opts, "nominal scan", function(idx, k) {
       fitNominal(Y[, idx, drop = FALSE], Y1[, idx, drop = FALSE],
                  Y2[, idx, drop = FALSE], X, Z, offset, eChr[idx], ePos[idx],
                  mChr, mPos, chunkTag(tag, k), opts)
@@ -539,12 +539,14 @@ makeChunks <- function(nGenes, threads) {
 # Run FUN(idx, k) for each chunk of gene indices in a forked process. Each
 # chunk's printed output, messages and warnings go to TAG_chunk<k>.log;
 # warnings are re-raised here with the chunk number.
-runChunks <- function(chunks, opts, FUN) {
+runChunks <- function(chunks, opts, phase, FUN) {
   tag <- opts[["output-tag"]]
-  message(sprintf("Running %d chunks in parallel; trace output in %s_chunk<k>.log",
-                  length(chunks), tag))
+  message(sprintf("Running %s in %d chunks in parallel; trace output in %s_chunk<k>.log",
+                  phase, length(chunks), tag))
   res <- parallel::mclapply(seq_along(chunks), function(k) {
-    con <- file(sprintf("%s.log", chunkTag(tag, k)), open = "wt")
+    # logs are cleared at the start of the run; each phase appends to them
+    con <- file(sprintf("%s.log", chunkTag(tag, k)), open = "at")
+    cat(sprintf("=== %s ===\n", phase), file = con)
     sink(con); sink(con, type = "message")
     on.exit({ sink(type = "message"); sink(); close(con) })
     warns <- character(0)
@@ -678,7 +680,7 @@ runPermutation <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
       opts[["seed"]] <- sample.int(.Machine$integer.max, 1)
       message(sprintf("Using permutation seed %d for all chunks", opts[["seed"]]))
     }
-    res <- runChunks(chunks, opts, function(idx, k) {
+    res <- runChunks(chunks, opts, "permutations", function(idx, k) {
       fitPermutation(Y[, idx, drop = FALSE], Y1[, idx, drop = FALSE],
                      Y2[, idx, drop = FALSE], X, Z, offset, eChr[idx], ePos[idx],
                      mChr, mPos, opts)
@@ -820,6 +822,9 @@ main <- function() {
   # write gene and marker indices up front so they are available even if
   # model fitting stops early
   chunks <- makeChunks(ncol(Y), opts[["threads"]])
+  if (length(chunks) > 1) {
+    unlink(sprintf("%s.log", chunkTag(opts[["output-tag"]], seq_along(chunks))))
+  }
   writeGenes(Y1, Y2, genes, eChrName, ePos, NULL, chunks, opts)
   writeMarkers(mID, mChrName, mPos, opts)
 
