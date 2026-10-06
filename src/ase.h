@@ -27,6 +27,11 @@ double negLogH0 (int n, double* para, void* ex, SEXP x1);
 double negLogH1 (int n, double* para, void* ex, SEXP x1);
 
 void negGradLogH0 (int n, double* para, double* gr, void* ex, SEXP x1);
+
+/* whether a point at which L-BFGS-B stopped with fail = 52 is a minimum */
+int lbfgsb_converged(int n, double *x, double fmin, double *lower, 
+                     double *upper, double factr, optimgr1 *grad, 
+                     void *ex, SEXP x1);
 void negGradLogH1 (int n, double* para, double* gr, void* ex, SEXP x1);
 
 void ase (int* dims, double* Y1, double* Y2, double* Z, char** output, 
