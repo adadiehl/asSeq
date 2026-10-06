@@ -136,7 +136,7 @@ double logL_b(double b1, int N, int h, int fam, double b0, double phi,
               double theta, double* y, double*x, double* mu, 
               double* mu1, double* nA, double* nTotal, double* zeta)
 {
-  int i, k;
+  int i;
   double ti, ni, ni0, mui, xi, pi; 
   double cst0, cst1, logL, sumL, piI;
   
@@ -184,16 +184,14 @@ double logL_b(double b1, int N, int h, int fam, double b0, double phi,
     if(zeta[i] > 0){ piI = pi; }else { piI = 0.5; }
     
     if(ni0 > 0){
-      for(k=0; k<ni0; k++) sumL += log(piI + k*theta);
+      sumL += bb_sum_log(piI, theta, ni0);
     }
     
     if(ni0 < ni){
-      for(k=0; k<ni-ni0; k++) sumL += log(1 - piI + k*theta);
+      sumL += bb_sum_log(1.0 - piI, theta, ni - ni0);
     }
     
-    for(k=0; k<ni; k++){
-      sumL -= log(1 + k*theta);
-    }
+    sumL -= bb_sum_log(1.0, theta, ni);
   }
   
   logL += sumL;
@@ -216,7 +214,7 @@ void grad_b(double b1, int N, int h, double b0, double phi,
             double* nA, double* nTotal, double* zeta, 
             double* gr, int trace) 
 {
-  int i, k;
+  int i;
   double grad1, grad2, df_dmu1, df_dmu2, dmu_db, dh_dpi1, dh_dpi2, dpi_db;
   double ti, ni, ni0, mui, xi, pi, tmp; 
   double cst0, cst1;
@@ -292,19 +290,13 @@ void grad_b(double b1, int N, int h, double b0, double phi,
     
     if (zeta[i] > 0) {
       if(ni0 > 0){
-        for(k=0; k<ni0; k++){
-          tmp = 1.0/(pi + k*theta);
-          dh_dpi1 += tmp;
-          dh_dpi2 -= tmp*tmp;
-        }
+        dh_dpi1 += bb_sum_inv(pi, theta, ni0);
+        dh_dpi2 -= bb_sum_inv2(pi, theta, ni0);
       }
       
       if(ni0 < ni){
-        for(k=0; k<ni-ni0; k++){
-          tmp = 1.0/(1.0 - pi + k*theta);
-          dh_dpi1 -= tmp;
-          dh_dpi2 -= tmp*tmp;
-        }
+        dh_dpi1 -= bb_sum_inv(1.0 - pi, theta, ni - ni0);
+        dh_dpi2 -= bb_sum_inv2(1.0 - pi, theta, ni - ni0);
       }
     }
   }

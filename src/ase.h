@@ -17,6 +17,12 @@
 #include "utility.h"
 #include "lbfgsb1.h"
 
+/* closed forms of the beta-binomial sums over k = 0, ..., m-1 */
+double bb_sum_log(double a, double theta, double m);   /* sum log(a + k theta) */
+double bb_sum_inv(double a, double theta, double m);   /* sum 1/(a + k theta)  */
+double bb_sum_kinv(double a, double theta, double m);  /* sum k/(a + k theta)  */
+double bb_sum_inv2(double a, double theta, double m);  /* sum 1/(a + k theta)^2 */
+
 double negLogH0 (int n, double* para, void* ex, SEXP x1);
 double negLogH1 (int n, double* para, void* ex, SEXP x1);
 

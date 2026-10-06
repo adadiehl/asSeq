@@ -10,6 +10,179 @@
 
 /**********************************************************************
  *
+ * Closed forms of the sums in the beta-binomial likelihood
+ *
+ * The ASE likelihood with mean pi and over-dispersion theta has terms
+ * prod_{k=0}^{m-1} (a + k theta) for a = pi, 1 - pi or 1, where m is a
+ * read count. Summing log(a + k theta) and its derivatives term by term
+ * costs O(m), which is prohibitive for highly expressed genes with
+ * hundreds of thousands of allele-specific reads per sample. With
+ * x = a/theta,
+ *
+ *   sum log(a + k theta) = m log(a) + sum log(1 + k/x)
+ *                        = m log(a) + lgamma(x + m) - lgamma(x) - m log(x)
+ *   sum 1/(a + k theta)  = (digamma(x + m) - digamma(x))/theta
+ *   sum k/(a + k theta)  = sum k/(x + k) / theta
+ *   sum 1/(a + k theta)^2 = (trigamma(x) - trigamma(x + m))/theta^2
+ *
+ * For x < 10 the gamma-function differences are evaluated directly. For
+ * x >= 10 (small theta) they are written with Stirling-type expansions
+ * so that the large terms cancel analytically, e.g.
+ *
+ *   sum log(1 + k/x) = x g(u) - log(1 + u)/2 + c(x + m) - c(x),
+ *
+ * with u = m/x, g(u) = (1 + u) log(1 + u) - u and c the Stirling
+ * correction of lgamma; g and u - log(1 + u) are evaluated by their
+ * Taylor series for small u. The expansions are accurate to about 1e-16
+ * for x >= 10. If theta <= 0 (not used by asSeq) the sums are computed
+ * term by term.
+ *
+ **********************************************************************/
+
+#define BB_XMIN 10.0
+
+/* lgamma(y) - [(y - 1/2) log(y) - y + log(2 pi)/2], for y >= 10 */
+static double bb_stirling_c(double y)
+{
+  double r = 1.0/y, r2 = r*r;
+  return r*(1.0/12 + r2*(-1.0/360 + r2*(1.0/1260 + r2*(-1.0/1680 + 
+         r2*(1.0/1188 + r2*(-691.0/360360 + r2*(1.0/156)))))));
+}
+
+/* log(y) - 1/(2y) - digamma(y), for y >= 10 */
+static double bb_digamma_e(double y)
+{
+  double r2 = 1.0/(y*y);
+  return r2*(1.0/12 + r2*(-1.0/120 + r2*(1.0/252 + r2*(-1.0/240 + 
+         r2*(1.0/132 + r2*(-691.0/32760 + r2*(1.0/12)))))));
+}
+
+/* trigamma(y) - 1/y - 1/(2 y^2), for y >= 10 */
+static double bb_trigamma_r(double y)
+{
+  double r = 1.0/y, r2 = r*r;
+  return r2*r*(1.0/6 + r2*(-1.0/30 + r2*(1.0/42 + r2*(-1.0/30 + 
+         r2*(5.0/66 + r2*(-691.0/2730 + r2*(7.0/6)))))));
+}
+
+/* g(u) = (1 + u) log(1 + u) - u = sum_{j>=2} (-1)^j u^j/(j(j-1)) */
+static double bb_g(double u)
+{
+  int j;
+  double t, s;
+  if (u >= 0.1) return (1.0 + u)*log1p(u) - u;
+  s = 0.0;
+  t = -u;
+  for (j=2; j<60; j++) {
+    t *= -u;
+    s += t/(j*(j - 1.0));
+    if (fabs(t) < 1e-18*fabs(s)) break;
+  }
+  return s;
+}
+
+/* h(u) = u - log(1 + u) = sum_{j>=2} (-1)^j u^j/j */
+static double bb_h(double u)
+{
+  int j;
+  double t, s;
+  if (u >= 0.1) return u - log1p(u);
+  s = 0.0;
+  t = -u;
+  for (j=2; j<60; j++) {
+    t *= -u;
+    s += t/j;
+    if (fabs(t) < 1e-18*fabs(s)) break;
+  }
+  return s;
+}
+
+static int bb_closed_form_ok(double a, double theta, double m)
+{
+  return (theta > 0.0 && a > 0.0 && R_FINITE(theta) && R_FINITE(a) && 
+          R_FINITE(m));
+}
+
+double bb_sum_log(double a, double theta, double m)
+{
+  int k;
+  double x, u, s;
+  if (m <= 0.0) return 0.0;
+  if (!bb_closed_form_ok(a, theta, m)) {
+    for (s=0.0, k=0; k<m; k++) s += log(a + k*theta);
+    return s;
+  }
+  x = a/theta;
+  if (x < BB_XMIN) {
+    s = lgammafn(x + m) - lgammafn(x) - m*log(x);
+  }else {
+    u = m/x;
+    s = x*bb_g(u) - 0.5*log1p(u) + bb_stirling_c(x + m) - bb_stirling_c(x);
+  }
+  return m*log(a) + s;
+}
+
+double bb_sum_inv(double a, double theta, double m)
+{
+  int k;
+  double x, u, d;
+  if (m <= 0.0) return 0.0;
+  if (!bb_closed_form_ok(a, theta, m)) {
+    for (d=0.0, k=0; k<m; k++) d += 1.0/(a + k*theta);
+    return d;
+  }
+  x = a/theta;
+  if (x < BB_XMIN) {
+    d = digamma(x + m) - digamma(x);
+  }else {
+    u = m/x;
+    d = log1p(u) + m/(2.0*x*(x + m)) - (bb_digamma_e(x + m) - bb_digamma_e(x));
+  }
+  return d/theta;
+}
+
+double bb_sum_kinv(double a, double theta, double m)
+{
+  int k;
+  double x, u, q;
+  /* the only term for m = 1 is k = 0 */
+  if (m <= 1.0) return 0.0;
+  if (!bb_closed_form_ok(a, theta, m)) {
+    for (q=0.0, k=0; k<m; k++) q += k/(a + k*theta);
+    return q;
+  }
+  x = a/theta;
+  /* q = sum k/(x + k) = m - x (digamma(x + m) - digamma(x)) */
+  if (x < BB_XMIN) {
+    q = m - x*(digamma(x + m) - digamma(x));
+  }else {
+    u = m/x;
+    q = x*bb_h(u) - m/(2.0*(x + m)) + x*(bb_digamma_e(x + m) - bb_digamma_e(x));
+  }
+  return q/theta;
+}
+
+double bb_sum_inv2(double a, double theta, double m)
+{
+  int k;
+  double x, t;
+  if (m <= 0.0) return 0.0;
+  if (!bb_closed_form_ok(a, theta, m)) {
+    for (t=0.0, k=0; k<m; k++) t += 1.0/((a + k*theta)*(a + k*theta));
+    return t;
+  }
+  x = a/theta;
+  if (x < BB_XMIN) {
+    t = trigamma(x) - trigamma(x + m);
+  }else {
+    t = m/(x*(x + m)) + m*(2.0*x + m)/(2.0*x*x*(x + m)*(x + m)) 
+        + bb_trigamma_r(x) - bb_trigamma_r(x + m);
+  }
+  return t/(theta*theta);
+}
+
+/**********************************************************************
+ *
  * negative log likelihood and gradient function under H0
  *
  * H0: pi = 0.5
@@ -20,7 +193,7 @@
  **********************************************************************/
 
 double negLogH0 (int n, double* para, void* ex, SEXP x1){
-  int i, k, N, h;
+  int i, N, h;
   double sumL, ni, ni0, pi0, piI, theta;
   double *exPara, *nA, *nTotal, *zeta;
   
@@ -45,16 +218,14 @@ double negLogH0 (int n, double* para, void* ex, SEXP x1){
     if(zeta[i] > 0){ piI = pi0; }else { piI = 0.5; }
     
     if(ni0 > 0){
-      for(k=0; k<ni0; k++) sumL += log(piI + k*theta);
+      sumL += bb_sum_log(piI, theta, ni0);
     }
     
     if(ni0 < ni){
-      for(k=0; k<ni-ni0; k++) sumL += log(1 - piI + k*theta);
+      sumL += bb_sum_log(1.0 - piI, theta, ni - ni0);
     }
     
-    for(k=0; k<ni; k++){
-      sumL -= log(1 + k*theta);
-    }
+    sumL -= bb_sum_log(1.0, theta, ni);
   }
   
   return(-sumL);
@@ -70,7 +241,7 @@ double negLogH0 (int n, double* para, void* ex, SEXP x1){
 void negGradLogH0(int n, double* para, double* gr, void* ex, SEXP x1)
 {
   double grad, ni, ni0, pi0, piI, theta;
-  int i, k, N, h;
+  int i, N, h;
   double *exPara, *nA, *nTotal, *zeta;
   
   exPara = (double *) ex;
@@ -92,14 +263,14 @@ void negGradLogH0(int n, double* para, double* gr, void* ex, SEXP x1)
     if(zeta[i] > 0){ piI = pi0; }else { piI = 0.5; }
 
     if(ni0 > 0){
-      for(k=1; k<ni0; k++) grad += k/(piI + k*theta);
+      grad += bb_sum_kinv(piI, theta, ni0);
     }
     
     if(ni0 < ni){
-      for(k=1; k<ni-ni0; k++) grad += k/(1.0 - piI + k*theta);
+      grad += bb_sum_kinv(1.0 - piI, theta, ni - ni0);
     }
 
-    for(k=1; k<ni; k++) grad -= k/(1.0 + k*theta);
+    grad -= bb_sum_kinv(1.0, theta, ni);
   }
   
   gr[0] = -grad;
@@ -117,7 +288,7 @@ void negGradLogH0(int n, double* para, double* gr, void* ex, SEXP x1)
  **********************************************************************/
 
 double negLogH1 (int n, double* para, void* ex, SEXP x1){
-  int i, k, N, h;
+  int i, N, h;
   double sumL, ni, ni0;
   double pi1, piI, theta;
   double *exPara, *nA, *nTotal, *zeta;
@@ -144,16 +315,14 @@ double negLogH1 (int n, double* para, void* ex, SEXP x1){
     if(zeta[i] > 0){ piI = pi1; }else { piI = 0.5; }
   
     if(ni0 > 0){
-      for(k=0; k<ni0; k++) sumL += log(piI + k*theta);
+      sumL += bb_sum_log(piI, theta, ni0);
     }
     
     if(ni0 < ni){
-      for(k=0; k<ni-ni0; k++) sumL += log(1.0 - piI + k*theta);
+      sumL += bb_sum_log(1.0 - piI, theta, ni - ni0);
     }
     
-    for(k=0; k<ni; k++){
-      sumL -= log(1.0 + k*theta);
-    }
+    sumL -= bb_sum_log(1.0, theta, ni);
     
   }
   
@@ -168,8 +337,8 @@ double negLogH1 (int n, double* para, void* ex, SEXP x1){
 
 void negGradLogH1 (int n, double* para, double* gr, void* ex, SEXP x1)
 {
-  int i, k, N, h;
-  double gradPi1, gradTh, pi1, piI, theta, tmp;
+  int i, N, h;
+  double gradPi1, gradTh, pi1, piI, theta;
   double *exPara, *nA, *nTotal, *zeta, ni, ni0;
   
   exPara = (double *) ex;
@@ -194,47 +363,29 @@ void negGradLogH1 (int n, double* para, double* gr, void* ex, SEXP x1)
       piI = pi1;
       
       if(ni0 > 0){
-        for(k=0; k<ni0; k++){
-          tmp = 1.0/(piI + k*theta);
-          
-          gradPi1 += tmp;
-          gradTh  += k*tmp;
-        }
+        gradPi1 += bb_sum_inv(piI, theta, ni0);
+        gradTh  += bb_sum_kinv(piI, theta, ni0);
       }
       
       if(ni0 < ni){
-        for(k=0; k<ni-ni0; k++){
-          tmp = 1.0/(1.0 - piI + k*theta);
-          
-          gradPi1 -= tmp;
-          gradTh  += k*tmp;
-        }
+        gradPi1 -= bb_sum_inv(1.0 - piI, theta, ni - ni0);
+        gradTh  += bb_sum_kinv(1.0 - piI, theta, ni - ni0);
       }
       
     }else {
       piI = 0.5;
       
       if(ni0 > 0){
-        for(k=0; k<ni0; k++){
-          tmp = 1.0/(piI + k*theta);
-          
-          gradTh += k*tmp;
-        }
+        gradTh += bb_sum_kinv(piI, theta, ni0);
       }
       
       if(ni0 < ni){
-        for(k=0; k<ni-ni0; k++){
-          tmp = 1.0/(1.0 - piI + k*theta);
-          
-          gradTh += k*tmp;
-        }
+        gradTh += bb_sum_kinv(1.0 - piI, theta, ni - ni0);
       }
       
     }
     
-    for(k=0; k<ni; k++){
-      gradTh -=  k/(1 + k*theta);
-    }
+    gradTh -= bb_sum_kinv(1.0, theta, ni);
 
   }
   
