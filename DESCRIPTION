@@ -1,8 +1,8 @@
 Package: asSeq
 Type: Package
 Title: Allele Specific Sequencing Study
-Version: 0.99.513
-Date: 2026-10-06
+Version: 0.99.514
+Date: 2026-10-07
 Author: Wei Sun, Vasyl Zhabotynsky, Chong Jin, and Paul Little
 Maintainer: Wei Sun <weisun@email.unc.edu>
 Description: allele specific study of RNA-seq data.  
