@@ -109,6 +109,14 @@ Permutation options (asSeq::trecaseP):
   across genes (qval_*) computed from (k + 1) / (n + 1), where k is the number
   of permutations with a better minimum p-value and n is nuse_*.
 
+  Because the permutation p-value cannot be smaller than 1/(n + 1), qval_* is
+  limited by the number of permutations. STR_perm.txt therefore also reports
+  a beta approximation (as in FastQTL): the minimum p-values from the
+  permutations are fit by a Beta(a, b) distribution (betaA_*, betaB_*), and
+  betaP_* = pbeta(pval_*, a, b), with qbeta_* the Benjamini-Hochberg q-value of
+  betaP_* across genes. betaP_* is the add-one empirical p-value when fewer
+  than 10 permutations were usable for the fit.
+
 Parallel options:
   --threads=INT           Number of processes to run in parallel [default 1].
                           Genes are split into chunks that are fitted in
@@ -701,6 +709,14 @@ runPermutation <- function(Y, Y1, Y2, X, Z, offset, eChr, ePos, mChr, mPos,
     out[[paste0("perP_", type)]] <- perP
     out[[paste0("nuse_", type)]] <- nuse
     out[[paste0("qval_", type)]] <- p.adjust((k + 1) / (nuse + 1), method = "BH")
+    # beta approximation; where the beta fit is not possible, fall back
+    # to the add-one empirical p-value
+    betaP <- perm[[paste0("betaP_", type)]]
+    betaP[is.na(betaP) & !is.na(perP)] <- ((k + 1) / (nuse + 1))[is.na(betaP) & !is.na(perP)]
+    out[[paste0("betaA_", type)]] <- perm[[paste0("betaA_", type)]]
+    out[[paste0("betaB_", type)]] <- perm[[paste0("betaB_", type)]]
+    out[[paste0("betaP_", type)]] <- betaP
+    out[[paste0("qbeta_", type)]] <- p.adjust(betaP, method = "BH")
   }
 
   # pval_* is 9 (or negative) when a gene could not be tested

@@ -6,7 +6,7 @@ import(MatrixEQTL)
 import(DESeq2)
 import(SummarizedExperiment)
 
-importFrom("stats", "glm", "lm", "na.omit", "pchisq", "qbinom", "qf",
+importFrom("stats", "glm", "lm", "na.omit", "optim", "pbeta", "pchisq", "qbinom", "qf",
              "qnorm", "qt", "rnorm", "sd", "var")
 importFrom("utils", "write.csv")
 importFrom("S4Vectors", "DataFrame")

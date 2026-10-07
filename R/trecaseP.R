@@ -276,13 +276,19 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
           as.double(scoreTestP), as.double(transTestP), 
           bestM = as.integer(bestM), pval=as.double(pval), 
           perP=as.double(perP), as.integer(trace), 
-          succeed=as.integer(succeed), PACKAGE="asSeq")
+          succeed=as.integer(succeed), 
+          perMinP=as.double(numeric(4*nY*nPermute)), PACKAGE="asSeq")
 
   if(W1[["succeed"]] != 1){ stop("error in trecase_permute\n") }
 
   bestM = W1[["bestM"]]
   pval  = W1[["pval"]]
   perP  = W1[["perP"]]
+  
+  # smallest p-value of each gene and model in each permutation, kept
+  # for the beta approximation: minP[[i + (k-1)*nY]] for gene i, model k
+  minP  = matrix(W1[["perMinP"]], nrow=4*nY)
+  minP  = lapply(seq_len(4*nY), function(q) minP[q, ])
   
   rm(W1)
   
@@ -352,13 +358,23 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
            yFailBaselineModel = as.integer(yFailBaselineModel), 
            as.double(scoreTestP), as.double(transTestP), bestM = as.integer(bbm), 
            pval=as.double(pvs), perP=as.double(ppvs), as.integer(trace), 
-           succeed=as.integer(succeed), PACKAGE="asSeq")
+           succeed=as.integer(succeed), 
+           perMinP=as.double(numeric(4*dims[1]*nPermute)), PACKAGE="asSeq")
     
     if(W2[["succeed"]] != 1){ stop("error in trecase_permute\n") }
     
     bbm  = W2[["bestM"]]
     pvs  = W2[["pval"]]
     ppvs = W2[["perP"]]
+    
+    mp = matrix(W2[["perMinP"]], nrow=4*dims[1])
+    for(k in 1:4){
+      for(j in seq_along(which.kp)){
+        q = which.kp[j] + (k - 1)*nY
+        minP[[q]] = c(minP[[q]], mp[j + (k - 1)*dims[1], ])
+      }
+    }
+    rm(mp)
     
     rm(W2)
     
@@ -406,17 +422,23 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
     
   }
 
+  # beta approximation of the permutation p-values
+  bp = betaPermP(minP, pval, !is.na(perP))
+  
   gID   = 1:nY
   bestM[bestM < 0] = NA
   bestM = bestM + 1
 
-  dataF = data.frame(geneID=gID, bestM, pval, perP, npuse)
+  dataF = data.frame(geneID=gID, bestM, pval, perP, npuse, bp$a, bp$b, bp$p)
   
   types = c("trec", "ase", "trecase", "trec_trecase")
   nms   = c("geneID", paste("markerID", types, sep="_"))
   nms   = c(nms, paste("pval", types, sep="_"))
   nms   = c(nms, paste("perP", types, sep="_"))
   nms   = c(nms, paste("nuse", types, sep="_"))
+  nms   = c(nms, paste("betaA", types, sep="_"))
+  nms   = c(nms, paste("betaB", types, sep="_"))
+  nms   = c(nms, paste("betaP", types, sep="_"))
   
   names(dataF) = nms
   

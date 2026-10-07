@@ -116,7 +116,19 @@ trecaseP(Y, Y1, Y2, X, Z, offset=NULL,
 }
 \value{
   A data frame with columns gene ID, marker ID,
-  nominal p-value, permutation p-value and number of permutations 
+  nominal p-value, permutation p-value and number of permutations, 
+  for each of the TReC, ASE, TReCASE and TReC/TReCASE (trans/cis) 
+  results. 
+  
+  The permutation p-value cannot be smaller than one over the number 
+  of permutations. The data frame therefore also has the columns 
+  betaA, betaB and betaP for each result: the smallest p-values from 
+  the permutations (excluding permutations in which no marker could be 
+  tested) are fit by a Beta(betaA, betaB) distribution by maximum 
+  likelihood, and betaP is the probability under this distribution of 
+  a smallest p-value at most as large as the observed one (Ongen et al. 
+  2016, Bioinformatics 32:1479). betaP is NA if fewer than 10 
+  permutations were usable or the fit failed. 
  }
 \author{ Wei Sun weisun@email.unc.edu }
 \keyword{ methods }

@@ -2394,6 +2394,10 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
  * Carry out fixed number of permutations, and calculate permutation
  * p-value of the best association of each gene expression trait
  *
+ * perMinP (length 4*nY*npermute) returns the best p-value of each gene
+ * and model in each permutation, at perMinP[(p - 1)*4*nY + i + k*nY] for
+ * permutation p, gene i and model k (-1 if no marker was tested).
+ *
  **********************************************************************/
 //may improve a bit, by moving here and passing to trecase_max1 , double *wa, int *iwa, double *g, SEXP x1
 
@@ -2405,7 +2409,7 @@ void trecase_permute (int* dims, double* Y, double* X, double* Z,
                       double* convGLM, int* yFailBaselineModel, 
                       double* scoreTestP, double* transTestP, 
                       int* best_m, double* pval, double* perPval, 
-                      int* trace, int* succeed)
+                      int* trace, int* succeed, double* perMinP)
 {
   int i, j, p, q, gap;
   time_t timer;
@@ -2582,6 +2586,12 @@ void trecase_permute (int* dims, double* Y, double* X, double* Z,
     
     for(q=0; q<4*nY; q++){
       if(pval0[q] <= pval[q]) perPval[q] += 1.0; 
+      
+      /* the best p-value of each gene and model in this permutation, used
+       * for the beta approximation of the permutation p-value; -1 if no
+       * marker gave a p-value below 1 (as for the unpermuted data, where
+       * such a gene and model are treated as not tested) */
+      perMinP[(p - 1)*4*nY + q] = (best_m0[q] < 0) ? -1.0 : pval0[q];
     }
     
   }

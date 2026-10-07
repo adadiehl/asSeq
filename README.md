@@ -43,7 +43,7 @@ Rscript $(Rscript -e 'cat(system.file("scripts/run_trecase.R", package="asSeq"))
     --output-tag=results --p-cut=0.05
 ```
 
-All other `trecase` arguments are available as options. Add `--permute` to also estimate gene-level permutation p-values with `trecaseP` and Benjamini-Hochberg q-values across genes (written to `<tag>_perm.txt`); in this mode `--p-cut` is optional and the nominal scan runs only if it is given. Use `--threads N` to fit genes in N parallel processes (Linux and macOS); results are the same as a single-process run. Run with `--help` for details.
+All other `trecase` arguments are available as options. Add `--permute` to also estimate gene-level permutation p-values with `trecaseP` and Benjamini-Hochberg q-values across genes (written to `<tag>_perm.txt`); in this mode `--p-cut` is optional and the nominal scan runs only if it is given. The permutation output also includes beta-approximated permutation p-values and q-values (as in FastQTL), which are not limited by the number of permutations. Use `--threads N` to fit genes in N parallel processes (Linux and macOS); results are the same as a single-process run. Run with `--help` for details.
 
 ## geoP
 
