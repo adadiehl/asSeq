@@ -2398,6 +2398,13 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
  * and model in each permutation, at perMinP[(p - 1)*4*nY + i + k*nY] for
  * permutation p, gene i and model k (-1 if no marker was tested).
  *
+ * Permutations in which no marker of a gene could be tested for a model
+ * (e.g. too few heterozygous samples with allele-specific reads after
+ * permuting) carry no information about it. perPval is the fraction of
+ * the permutations with a test whose best p-value is at most the observed
+ * one, nTestPerm (length 4*nY) the number of permutations with a test,
+ * and perPval is -1 if there were none.
+ *
  **********************************************************************/
 //may improve a bit, by moving here and passing to trecase_max1 , double *wa, int *iwa, double *g, SEXP x1
 
@@ -2409,7 +2416,8 @@ void trecase_permute (int* dims, double* Y, double* X, double* Z,
                       double* convGLM, int* yFailBaselineModel, 
                       double* scoreTestP, double* transTestP, 
                       int* best_m, double* pval, double* perPval, 
-                      int* trace, int* succeed, double* perMinP)
+                      int* trace, int* succeed, double* perMinP, 
+                      int* nTestPerm)
 {
   int i, j, p, q, gap;
   time_t timer;
@@ -2467,6 +2475,7 @@ void trecase_permute (int* dims, double* Y, double* X, double* Z,
   /* initial permutation p-value */
   for(q=0; q<4*nY; q++){ 
     perPval[q] = 0.0; 
+    nTestPerm[q] = 0;
     pval[q]    = 1.0;
     best_m[q]  = -9;
   }
@@ -2585,7 +2594,10 @@ void trecase_permute (int* dims, double* Y, double* X, double* Z,
     }
     
     for(q=0; q<4*nY; q++){
-      if(pval0[q] <= pval[q]) perPval[q] += 1.0; 
+      if (best_m0[q] >= 0) {
+        nTestPerm[q] += 1;
+        if(pval0[q] <= pval[q]) perPval[q] += 1.0; 
+      }
       
       /* the best p-value of each gene and model in this permutation, used
        * for the beta approximation of the permutation p-value; -1 if no
@@ -2598,7 +2610,9 @@ void trecase_permute (int* dims, double* Y, double* X, double* Z,
   
   PutRNGstate();
   
-  for(q=0; q<4*nY; q++){ perPval[q] /= nPer; }
+  for(q=0; q<4*nY; q++){ 
+    perPval[q] = (nTestPerm[q] > 0) ? perPval[q]/nTestPerm[q] : -1.0; 
+  }
   
   *succeed = 0;
 

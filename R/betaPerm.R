@@ -59,7 +59,7 @@ fitBetaPerm <- function(x, min.n=10)
 # minP: list of length nY*4 with the permuted smallest p-values of gene i
 # and model k at position i + (k - 1)*nY; pval: nY x 4 matrix of observed
 # smallest p-values; tested: nY x 4 logical matrix. Returns a list of
-# nY x 4 matrices a, b and p.
+# nY x 4 matrices a, b and p; p is at least .Machine$double.xmin.
 betaPermP <- function(minP, pval, tested)
 {
   nY = nrow(pval)
@@ -72,6 +72,9 @@ betaPermP <- function(minP, pval, tested)
         a[i, k] = ab[1]
         b[i, k] = ab[2]
         p[i, k] = if(pval[i, k] >= 1) 1 else pbeta(pval[i, k], ab[1], ab[2])
+        # a p-value that underflows (e.g. an observed p-value of 0) is
+        # reported as the smallest positive double, meaning "this or less"
+        p[i, k] = max(p[i, k], .Machine$double.xmin)
       }
     }
   }

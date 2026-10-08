@@ -277,13 +277,18 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
           bestM = as.integer(bestM), pval=as.double(pval), 
           perP=as.double(perP), as.integer(trace), 
           succeed=as.integer(succeed), 
-          perMinP=as.double(numeric(4*nY*nPermute)), PACKAGE="asSeq")
+          perMinP=as.double(numeric(4*nY*nPermute)), 
+          nTestPerm=as.integer(numeric(4*nY)), PACKAGE="asSeq")
 
   if(W1[["succeed"]] != 1){ stop("error in trecase_permute\n") }
 
   bestM = W1[["bestM"]]
   pval  = W1[["pval"]]
   perP  = W1[["perP"]]
+  
+  # number of permutations in which a test was possible; perP is the
+  # permutation p-value among those (-1 if there were none)
+  ntest = W1[["nTestPerm"]]
   
   # smallest p-value of each gene and model in each permutation, kept
   # for the beta approximation: minP[[i + (k-1)*nY]] for gene i, model k
@@ -297,11 +302,14 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
   
   npuse  = rep(nnp[1], length(perP))
   npuse[which(is.na(perP))] = NA
+  
+  perP[perP < 0] = NA
 
   bestM = matrix(bestM, ncol=4)
   pval  = matrix(pval,  ncol=4)
   perP  = matrix(perP,  ncol=4)  
   npuse = matrix(npuse, ncol=4)  
+  ntest = matrix(ntest, ncol=4)
   
   # ---------------------------------------------------------
   # continue the permutations.
@@ -359,13 +367,15 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
            as.double(scoreTestP), as.double(transTestP), bestM = as.integer(bbm), 
            pval=as.double(pvs), perP=as.double(ppvs), as.integer(trace), 
            succeed=as.integer(succeed), 
-           perMinP=as.double(numeric(4*dims[1]*nPermute)), PACKAGE="asSeq")
+           perMinP=as.double(numeric(4*dims[1]*nPermute)), 
+           nTestPerm=as.integer(numeric(4*dims[1])), PACKAGE="asSeq")
     
     if(W2[["succeed"]] != 1){ stop("error in trecase_permute\n") }
     
     bbm  = W2[["bestM"]]
     pvs  = W2[["pval"]]
     ppvs = W2[["perP"]]
+    nts  = matrix(W2[["nTestPerm"]], ncol=4)
     
     mp = matrix(W2[["perMinP"]], nrow=4*dims[1])
     for(k in 1:4){
@@ -378,7 +388,7 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
     
     rm(W2)
     
-    w3 = which(bbm < 0 | pvs < 0)
+    w3 = which(bbm < 0 | pvs < 0 | ppvs < 0)
     if(length(w3) > 0) ppvs[w3] = NA
     
     bbm  = matrix(bbm,  ncol=4)
@@ -388,7 +398,8 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
     # ---------------------------------------------------------
     # update permutation p-values
     # w1 and w2 are weights for the previous permutations and  
-    # the current permutations
+    # the current permutations, by their numbers of permutations in 
+    # which a test was possible
     # ---------------------------------------------------------
 
     if(any(bbm != bestM[which.kp,,drop=FALSE])){
@@ -404,17 +415,17 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
       
       for(k in 1:ncol(ppvs)){
         
-        w2 = nPermute/(nPermute + npuse[wj,k])
-        w1 = 1 - w2
-
-        if(is.na(ppvs[j,k]) && !(is.na(perP[wj,k]))){ 
-          perP[wj,k]  = w1*perP[wj,k]
-        }else if(is.na(perP[wj,k]) && !(is.na(ppvs[j,k]))){
-          perP[wj,k]  = w2*ppvs[j,k]
-        }else{
-          perP[wj,k]  = w1*perP[wj,k] + w2*ppvs[j,k]
+        if(!is.na(ppvs[j,k])){
+          if(is.na(perP[wj,k])){
+            perP[wj,k] = ppvs[j,k]
+          }else{
+            w2 = nts[j,k]/(nts[j,k] + ntest[wj,k])
+            w1 = 1 - w2
+            perP[wj,k]  = w1*perP[wj,k] + w2*ppvs[j,k]
+          }
         }
 
+        ntest[wj,k] = ntest[wj,k] + nts[j,k]
         npuse[wj,k] = npuse[wj,k] + nPermute
 
       }
@@ -429,13 +440,16 @@ function(Y, Y1, Y2, X, Z, offset=NULL,
   bestM[bestM < 0] = NA
   bestM = bestM + 1
 
-  dataF = data.frame(geneID=gID, bestM, pval, perP, npuse, bp$a, bp$b, bp$p)
+  ntest[is.na(npuse)] = NA
+  
+  dataF = data.frame(geneID=gID, bestM, pval, perP, npuse, ntest, bp$a, bp$b, bp$p)
   
   types = c("trec", "ase", "trecase", "trec_trecase")
   nms   = c("geneID", paste("markerID", types, sep="_"))
   nms   = c(nms, paste("pval", types, sep="_"))
   nms   = c(nms, paste("perP", types, sep="_"))
   nms   = c(nms, paste("nuse", types, sep="_"))
+  nms   = c(nms, paste("ntest", types, sep="_"))
   nms   = c(nms, paste("betaA", types, sep="_"))
   nms   = c(nms, paste("betaB", types, sep="_"))
   nms   = c(nms, paste("betaP", types, sep="_"))

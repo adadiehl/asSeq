@@ -116,9 +116,14 @@ trecaseP(Y, Y1, Y2, X, Z, offset=NULL,
 }
 \value{
   A data frame with columns gene ID, marker ID,
-  nominal p-value, permutation p-value and number of permutations, 
+  nominal p-value, permutation p-value, number of permutations (nuse) 
+  and number of permutations in which a test was possible (ntest), 
   for each of the TReC, ASE, TReCASE and TReC/TReCASE (trans/cis) 
-  results. 
+  results. Permutations in which no marker could be tested (e.g. for 
+  ASE, when too few permuted heterozygous samples have allele-specific 
+  reads) carry no information and are left out: the permutation p-value 
+  is the fraction of the ntest permutations whose smallest p-value is at 
+  most the observed one, and NA if ntest is 0. 
   
   The permutation p-value cannot be smaller than one over the number 
   of permutations. The data frame therefore also has the columns 
@@ -128,7 +133,9 @@ trecaseP(Y, Y1, Y2, X, Z, offset=NULL,
   likelihood, and betaP is the probability under this distribution of 
   a smallest p-value at most as large as the observed one (Ongen et al. 
   2016, Bioinformatics 32:1479). betaP is NA if fewer than 10 
-  permutations were usable or the fit failed. 
+  permutations were usable or the fit failed, and at least 
+  .Machine$double.xmin (a smaller value, e.g. from an observed p-value 
+  that underflows to 0, is reported as that). 
  }
 \author{ Wei Sun weisun@email.unc.edu }
 \keyword{ methods }
