@@ -1173,7 +1173,11 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
           
         }else{
         
-          dfr_TReC = (double)(df0 - df1);
+          /* in the allelic-scale model (adjZ) the genotype enters through
+           * the offset and adds one parameter; df0 - df1 can be larger
+           * only because samples whose fitted mean is ~0 at a boundary
+           * estimate of b are left out of the residual df */
+          dfr_TReC = adjZ ? 1.0 : (double)(df0 - df1);
 
           if(dfr_TReC < 0.5){
             pvalTReC = 995.0;
@@ -1275,7 +1279,8 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
         if (fabs(th0) < 1e-7)  dfr_joint_ASE += 1.0;
         if (fabs(theta_new) < 1e-7)  dfr_joint_ASE -= 1.0;
         
-        dfr_joint_TReC = (double)(df0 - df1_join);
+        /* the joint model uses the allelic-scale TReC model; see dfr_TReC */
+        dfr_joint_TReC = 1.0;
         
         /* we need to subtrace 1 here because in joint model, 
          * b (of TReC model) and pi (of ASE model) are the same */
@@ -2211,7 +2216,11 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
           
         }else{
         
-          dfr_TReC = (double)(df0 - df1);
+          /* in the allelic-scale model (adjZ) the genotype enters through
+           * the offset and adds one parameter; df0 - df1 can be larger
+           * only because samples whose fitted mean is ~0 at a boundary
+           * estimate of b are left out of the residual df */
+          dfr_TReC = adjZ ? 1.0 : (double)(df0 - df1);
           
           if(dfr_TReC < 0.5){
             pvalTReC = 995.0;
@@ -2306,7 +2315,8 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
         if (fabs(th0) < 1e-7)  dfr_joint_ASE += 1.0;
         if (fabs(theta_new) < 1e-7)  dfr_joint_ASE -= 1.0;
         
-        dfr_joint_TReC = (double)(df0 - df1_join);
+        /* the joint model uses the allelic-scale TReC model; see dfr_TReC */
+        dfr_joint_TReC = 1.0;
         
         /* we need to subtract 1 here because in the joint model, 
          * b (of TReC model) and pi (of ASE model) are the same */

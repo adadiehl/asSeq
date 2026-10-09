@@ -1662,16 +1662,27 @@ void grad_b_TReC(double b1, int N, int fam, double b0, double phi,
 /**********************************************************************
  * b_TReC_ml: find the MLE of b in TReC model by 
  * a Newton-Raphson algrorithm
+ *
+ * When one allele is (nearly) silent, the MLE of b is at -Inf or +Inf:
+ * e.g. with no samples homozygous for the silent allele, the mean of
+ * heterozygous samples approaches half that of the others and the
+ * log-likelihood flattens out exponentially in b. Newton then keeps
+ * stepping in the same direction by about one unit while the gradient
+ * shrinks. Such steps are not treated as a failure, and b is bounded
+ * by +/-B_TREC_MAX, at which the silent allele's share of expression,
+ * exp(-B_TREC_MAX), is negligible.
  **********************************************************************/
+
+#define B_TREC_MAX 30.0
 
 void b_TReC_ml(double* b_xj, int N, int fam, double b0, double phi, 
                double* y,double* x, double* mu, int limit, 
                double eps, int trace, int* failR)
 {
-  int it, fail;
-  double logL, b1, del, gr[2];
-  double min_b = -1e5;
-  double max_b =  1e5;
+  int it, fail, dir, dir_last = 0, tail;
+  double logL, b1, del, gr[2], gr0_last = R_PosInf;
+  double min_b = -B_TREC_MAX;
+  double max_b =  B_TREC_MAX;
   
   it   = 0;
   del  = 1.0;
@@ -1699,7 +1710,13 @@ void b_TReC_ml(double* b_xj, int N, int fam, double b0, double phi,
     b1 -= del;
     it += 1;
     
-    if (it > 10 && fabs(del) > 0.1) {
+    /* heading towards -Inf or +Inf on a flattening log-likelihood */
+    dir  = (del > 0) - (del < 0);
+    tail = (dir == dir_last && fabs(gr[0]) < fabs(gr0_last) && gr[1] < 0);
+    dir_last = dir;
+    gr0_last = gr[0];
+    
+    if (it > 10 && fabs(del) > 0.1 && !tail) {
       fail = 1;
       break;
     }
