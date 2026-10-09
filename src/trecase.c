@@ -16,6 +16,11 @@
 #include "glm.h"
 #include "ase.h"
 
+/* in glm.c */
+int joint_refine(int N, int nX, double *y, double *X, double *z, 
+                 double *offset, int family, double *exPara, SEXP x1,
+                 double *b, double *phi, double *theta, double *twoLL, 
+                 double *fitted, int trace);
 
 #define LMM   5
 #define NPARA 2
@@ -256,10 +261,10 @@ void b_ml(double* b_xj, int N, int h, double b0, double phi,
           double* nA, double* nTotal, double* zeta, 
           int limit, double eps, int trace, int* failR)
 {
-  int it, fail;
-  double b1, del, gr[2];
-  double min_b = -1e5;
-  double max_b =  1e5;
+  int it, fail, dir, dir_last = 0, tail;
+  double b1, del, gr[2], gr0_last = R_PosInf;
+  double min_b = -B_TREC_MAX;
+  double max_b =  B_TREC_MAX;
   
   it   = 0;
   del  = 1.0;
@@ -287,7 +292,14 @@ void b_ml(double* b_xj, int N, int h, double b0, double phi,
     b1 -= del;
     it += 1;
     
-    if (it > 10 && fabs(del) > 0.1) {
+    /* heading towards -Inf or +Inf on a flattening log-likelihood, 
+     * e.g. when one allele is silent; see b_TReC_ml */
+    dir  = (del > 0) - (del < 0);
+    tail = (dir == dir_last && fabs(gr[0]) < fabs(gr0_last) && gr[1] < 0);
+    dir_last = dir;
+    gr0_last = gr[0];
+    
+    if (it > 10 && fabs(del) > 0.1 && !tail) {
       fail = 1;
       break;
     }
@@ -298,7 +310,6 @@ void b_ml(double* b_xj, int N, int h, double b0, double phi,
     }
     
     if (b1 > max_b) {
-      fail = 1;
       b1 = max_b;
       if(trace > 3)
         Rprintf("    Estimate of b_xj is truncated at %.2e\n", max_b);
@@ -306,7 +317,6 @@ void b_ml(double* b_xj, int N, int h, double b0, double phi,
     }
     
     if(b1 < min_b) {
-      fail = 1;
       b1 = min_b;
       if(trace > 3)
         Rprintf("    Estimate of b_xj is truncated at %.2e\n", min_b);
@@ -1142,7 +1152,16 @@ void trecase (int* dims, double* Y, double* X, double* Z, double* z1,
             Rprintf("\n  i=%d, j=%d, reach max iteration using joint model. ", i, j);
             Rprintf("g=%d, maxit=%d, paraDiff=%.3e\n", g, maxit, paraDiff);
           }
-          useJointModel = 0;
+          twoLL1 = twoLL_trec_joint1 + twoLL_ase_joint1;
+          if (joint_refine(N, nX, pY, X, pZ, offset, family, exPara, x1, 
+                           &bxj_old, &phi_old, &theta_old, &twoLL1, fitted2, 
+                           *trace)) {
+            theta_new = theta_old;
+            if (*trace)
+              Rprintf("  i=%d, j=%d, joint model refined by BFGS\n", i, j);
+          }else {
+            useJointModel = 0;
+          }
         }
               
       }
@@ -2184,7 +2203,16 @@ void trecase_max1 (int* dims, double* Y, double* X, double* Z,
             Rprintf("\n  i=%d, j=%d, reach max iteration using joint model. ", i, j);
             Rprintf("g=%d, maxit=%d, paraDiff=%.3e\n", g, maxit, paraDiff);
           }
-          useJointModel = 0;
+          twoLL1 = twoLL_trec_joint1 + twoLL_ase_joint1;
+          if (joint_refine(N, nX, pY, X, pZ, offset, family, exPara, x1, 
+                           &bxj_old, &phi_old, &theta_old, &twoLL1, fitted2, 
+                           *trace)) {
+            theta_new = theta_old;
+            if (*trace)
+              Rprintf("  i=%d, j=%d, joint model refined by BFGS\n", i, j);
+          }else {
+            useJointModel = 0;
+          }
         }
         
       }

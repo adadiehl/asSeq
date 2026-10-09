@@ -16,6 +16,7 @@
 #include <R_ext/Applic.h>
 #include "utility.h"
 #include "glm.h"
+#include "ase.h"
 
 /**********************************************************************
  *
@@ -1669,11 +1670,9 @@ void grad_b_TReC(double b1, int N, int fam, double b0, double phi,
  * log-likelihood flattens out exponentially in b. Newton then keeps
  * stepping in the same direction by about one unit while the gradient
  * shrinks. Such steps are not treated as a failure, and b is bounded
- * by +/-B_TREC_MAX, at which the silent allele's share of expression,
- * exp(-B_TREC_MAX), is negligible.
+ * by +/-B_TREC_MAX (glm.h), at which the silent allele's share of
+ * expression, exp(-B_TREC_MAX), is negligible.
  **********************************************************************/
-
-#define B_TREC_MAX 30.0
 
 void b_TReC_ml(double* b_xj, int N, int fam, double b0, double phi, 
                double* y,double* x, double* mu, int limit, 
@@ -1954,6 +1953,150 @@ static int trec_refine(int N, int nX, double *y, double *X, double *z,
   R_Free(Xs); R_Free(par); R_Free(A); R_Free(r); R_Free(mask);
   return ok;
 }
+
+/**********************************************************************
+ *
+ * joint_refine
+ *
+ * The joint TReC-ASE model alternates between updating b, the ASE
+ * overdispersion theta and the TReC parameters, which can converge very
+ * slowly. joint_refine maximizes the joint likelihood over all of them
+ * with BFGS, starting from the last estimates (see trec_refine); the
+ * ASE allelic ratio is pi = exp(b)/(1 + exp(b)) and theta = exp(u).
+ *
+ **********************************************************************/
+
+typedef struct {
+  trec_data t;
+  int nt;               /* number of TReC parameters */
+  double *exPara;
+  SEXP x1;
+} joint_data;
+
+static double joint_negll(int n, double *par, void *ex)
+{
+  joint_data *d = (joint_data *) ex;
+  double pa[2], b = par[d->t.p];
+  pa[0] = exp(par[n - 1]);
+  pa[1] = exp(b)/(1.0 + exp(b));
+  return trec_negll(d->nt, par, &d->t) + negLogH1(2, pa, d->exPara, d->x1);
+}
+
+static void joint_negll_gr(int n, double *par, double *gr, void *ex)
+{
+  joint_data *d = (joint_data *) ex;
+  double pa[2], ga[2], b = par[d->t.p];
+  pa[0] = exp(par[n - 1]);
+  pa[1] = exp(b)/(1.0 + exp(b));
+  trec_negll_gr(d->nt, par, gr, &d->t);
+  negGradLogH1(2, pa, ga, d->exPara, d->x1);
+  gr[d->t.p] += ga[1]*pa[1]*(1.0 - pa[1]);
+  gr[n - 1]   = ga[0]*pa[0];
+}
+
+/* Returns 1 and updates b, phi, theta, twoLL and fitted if BFGS converges
+ * to a joint likelihood at least as high as twoLL; returns 0 otherwise. */
+int joint_refine(int N, int nX, double *y, double *X, double *z, 
+                 double *offset, int family, double *exPara, SEXP x1,
+                 double *b, double *phi, double *theta, double *twoLL, 
+                 double *fitted, int trace)
+{
+  int i, j, k, p = nX + 1, nt, n, ok = 1, fail = 0, fncount, grcount, *mask;
+  double *Xs, *par, *A, *r, m, sd, f, Fmin, twoLL1;
+  joint_data d;
+  
+  if (family != NB && family != POISSON) return 0;
+  
+  nt   = p + 1 + (family == NB);
+  n    = nt + 1;
+  Xs   = (double *) R_Calloc(N*p, double);
+  par  = (double *) R_Calloc(n, double);
+  A    = (double *) R_Calloc(p*p, double);
+  r    = (double *) R_Calloc(N, double);
+  mask = (int *) R_Calloc(n, int);
+  
+  for (i=0; i<N; i++) Xs[i] = 1.0;
+  for (j=0; j<nX; j++) {
+    m = 0.0; sd = 0.0;
+    for (i=0; i<N; i++) m += X[i + j*N];
+    m /= N;
+    for (i=0; i<N; i++) sd += (X[i + j*N] - m)*(X[i + j*N] - m);
+    sd = sqrt(sd/(N - 1.0));
+    if (!(sd > 0.0)) { ok = 0; break; }
+    for (i=0; i<N; i++) Xs[i + (j+1)*N] = (X[i + j*N] - m)/sd;
+  }
+  if (ok) {
+    for (i=0; i<N; i++) {
+      f = 0.0;
+      if (fabs(z[i] - 1.0) < 0.01) f = log(0.5*(1.0 + exp(*b)));
+      else if (fabs(z[i] - 2.0) < 0.01) f = *b;
+      if (!(fitted[i] > 0.0)) { ok = 0; break; }
+      r[i] = log(fitted[i]) - offset[i] - f;
+    }
+  }
+  if (ok) {
+    for (j=0; j<p; j++) {
+      par[j] = 0.0;
+      for (i=0; i<N; i++) par[j] += Xs[i + j*N]*r[i];
+      for (k=0; k<p; k++) {
+        A[j + k*p] = 0.0;
+        for (i=0; i<N; i++) A[j + k*p] += Xs[i + j*N]*Xs[i + k*N];
+      }
+    }
+    for (j=0; j<p && ok; j++) {
+      for (k=0; k<j; k++) A[j + j*p] -= A[j + k*p]*A[j + k*p];
+      if (!(A[j + j*p] > 0.0)) { ok = 0; break; }
+      A[j + j*p] = sqrt(A[j + j*p]);
+      for (i=j+1; i<p; i++) {
+        for (k=0; k<j; k++) A[i + j*p] -= A[i + k*p]*A[j + k*p];
+        A[i + j*p] /= A[j + j*p];
+      }
+    }
+  }
+  if (ok) {
+    for (j=0; j<p; j++) {
+      for (k=0; k<j; k++) par[j] -= A[j + k*p]*par[k];
+      par[j] /= A[j + j*p];
+    }
+    for (j=p-1; j>=0; j--) {
+      for (k=j+1; k<p; k++) par[j] -= A[k + j*p]*par[k];
+      par[j] /= A[j + j*p];
+    }
+    par[p] = *b;
+    if (family == NB) par[p + 1] = -log(*phi);
+    par[n - 1] = log(fmax2(*theta, 1e-8));
+    for (j=0; j<n; j++) mask[j] = 1;
+    
+    d.t.N = N; d.t.p = p; d.t.nb = (family == NB);
+    d.t.y = y; d.t.Xs = Xs; d.t.off = offset; d.t.z = z; d.t.mu = r;
+    d.nt = nt; d.exPara = exPara; d.x1 = x1;
+    
+    if (!R_FINITE(joint_negll(n, par, &d))) ok = 0;
+  }
+  if (ok) {
+    vmmin(n, par, &Fmin, joint_negll, joint_negll_gr, 1000, 0, mask, 
+          R_NegInf, 1e-12, 10, &d, &fncount, &grcount, &fail);
+    twoLL1 = -2.0*Fmin;
+    ok = (fail == 0 && R_FINITE(twoLL1) && twoLL1 >= *twoLL - 1e-8*fabs(*twoLL));
+    
+    if (trace > 1) {
+      Rprintf("  joint_refine: fail=%d, twoLL=(%.6e, %.6e), b=(%.4e, %.4e), theta=(%.4e, %.4e)%s\n", 
+              fail, *twoLL, twoLL1, *b, par[p], *theta, exp(par[n - 1]), ok ? "" : ", not used");
+    }
+  }
+  if (ok) {
+    trec_negll(nt, par, &d.t);
+    for (i=0; i<N; i++) fitted[i] = d.t.mu[i];
+    *b     = par[p];
+    *phi   = (family == NB) ? exp(-par[p + 1]) : 0.0;
+    *theta = exp(par[n - 1]);
+    *twoLL = twoLL1;
+  }
+  
+  R_Free(Xs); R_Free(par); R_Free(A); R_Free(r); R_Free(mask);
+  return ok;
+}
+
 
 int glmNBlog(int *dimsNew, int *nIter, double *pY, double *z, 
              int *linkR, double *offset, double *pX, double *conv, 

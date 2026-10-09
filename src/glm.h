@@ -23,6 +23,10 @@
 #define IDENTITY  3
 #define INVERSE   4
 
+/* bound on the allelic-scale genotype effect b (see b_TReC_ml) */
+
+#define B_TREC_MAX 30.0
+
 /* GLM definition functions */
 
 int     wcenter(double*, int, double*, int, double*);
