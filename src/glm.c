@@ -386,6 +386,18 @@ void initialize(int family, double* y, double* mu, int N, double* nTotal_binom)
  
  **********************************************************************/
 
+/* On some data plain IRLS is unstable near the optimum: the weighted
+ * sum of squares moves up and down in turn with growing amplitude, and
+ * the fit never converges; it ends at maxit iterations or once the
+ * weights break down. Since glmFit_damped restarts from the default
+ * initial values, giving up on such a fit earlier does not change the
+ * result, only the time spent; this is done only for the models that
+ * glmFit_damped handles. Plain IRLS gives up once the change in
+ * the weighted sum of squares has alternated in sign and grown in size
+ * for IRLS_GROW iterations in a row; in fits that converge, such runs
+ * were at most 8 iterations long. */
+#define IRLS_GROW 16
+
 /**********************************************************************
  *
  * glmFit_damped
@@ -597,6 +609,8 @@ int glmFit(int* familyR, int* linkR, int* dims, int* nIter,
   int N, M, maxit, init, useOffset;
   int i = 0, j=0, Nu, dfr = 0, irls, empty = 0;
   int x_rank = 0, convg = 0, iter = 0;
+  int nGrow = 0;
+  double dWss, dWss_last = 0.0;
   
   N = dims[0];
   M = dims[1];
@@ -893,8 +907,27 @@ int glmFit(int* familyR, int* linkR, int* dims, int* nIter,
         }
         
         convg = (Nu<=0) || (iter && (fabs(wss-wss_last)/(wss_last + 0.1) < conv));
+        
+        /* give up early on a fit whose oscillation keeps growing */
+        if (iter) {
+          dWss = wss - wss_last;
+          if (iter > 1 && dWss*dWss_last < 0 && fabs(dWss) > fabs(dWss_last)) {
+            nGrow ++;
+          }else {
+            nGrow = 0;
+          }
+          dWss_last = dWss;
+        }
+        
         wss_last = wss;
         iter ++;
+        
+        if (!convg && nGrow >= IRLS_GROW && link == LOG && 
+            (family == POISSON || family == NB)) {
+          if (*trace > 1)
+            Rprintf("  glmFit: IRLS oscillation is growing, stopped at iteration %d\n", iter);
+          break;
+        }
       }
       
       /* IRLS did not converge: retry with step-halving. This includes
